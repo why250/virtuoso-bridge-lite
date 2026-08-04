@@ -609,4 +609,6 @@ Uses `xwininfo` to find virtuoso-owned dialog windows and `XTestFakeKeyEvent` to
 
 ## Related skills
 
+- **virtuoso-wrapper** — use when a verified native SKILL operation or repeatable workflow must become a maintained, reusable Python API in `src/virtuoso_bridge`, rather than being executed only once.
+
 - **spectre** — standalone netlist-driven Spectre simulation (no Virtuoso GUI). Use when the user has a `.scs` netlist and wants to run it directly.

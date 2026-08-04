@@ -1,0 +1,4 @@
+interface:
+  display_name: "Virtuoso Wrapper"
+  short_description: "Promote verified SKILL workflows into reusable Python APIs."
+  default_prompt: "Use $virtuoso-wrapper to turn a verified Virtuoso SKILL operation into a tested Python wrapper."
