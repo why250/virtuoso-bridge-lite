@@ -351,6 +351,7 @@ history, status = client.maestro.run_and_wait(session=session, timeout=600)
 | Python | SKILL | Description |
 |--------|-------|-------------|
 | `client.maestro.create_netlist_for_corner(test, corner, output_dir, *, session="")` | `maeCreateNetlistForCorner` | Export netlist for one corner, optionally from an explicit session |
+| `client.maestro.export_netlist(lib, cell, *, test=None, corner="Nominal", output_root="output", overwrite=False)` | `maeOpenSetup` + `maeGetSetup` + `maeCreateNetlistForCorner` | Export one configured test/corner to local files |
 | `client.maestro.export_output_view(filepath, *, view="Detail")` | `maeExportOutputView` | Export results to CSV |
 | `client.maestro.write_script(filepath)` | `maeWriteScript` | Export setup as SKILL script |
 
@@ -361,9 +362,22 @@ client.maestro.create_netlist_for_corner(
     "./myNetlistDir",
     session=session,
 )
+
+# High-level export: no GUI focus, simulation, or Maestro save required.
+# The test is inferred only when the Maestro config contains exactly one test.
+export = client.maestro.export_netlist("test_tb", "res_tb")
+print(export.input_scs)
+# output/test_tb/res_tb/netlist/<test>__Nominal/input.scs
 client.maestro.export_output_view("./results.csv")
 client.maestro.write_script("mySetupScript.il")
 ```
+
+`export_netlist()` opens and closes a temporary background Maestro session.
+It validates the requested test and corner against the configured setup, then
+downloads both the complete Spectre input (`input.scs`) and the circuit-only
+Cadence `netlist`. It never runs a simulation or saves the Maestro setup.
+The destination is protected by default; pass `overwrite=True` to replace an
+existing test/corner export.
 
 ## Write — Migration
 

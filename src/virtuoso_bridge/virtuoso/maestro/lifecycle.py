@@ -11,6 +11,7 @@ import logging
 import re
 
 from virtuoso_bridge import VirtuosoClient
+from virtuoso_bridge.virtuoso.ops import q
 
 logger = logging.getLogger(__name__)
 
@@ -215,9 +216,11 @@ def _close_background_sessions(client: VirtuosoClient) -> list[str]:
 def open_session(client: VirtuosoClient, lib: str, cell: str) -> str:
     """Open maestro in background via maeOpenSetup. Returns session string."""
     r = client.execute_skill(
-        f'let((session) session = maeOpenSetup("{lib}" "{cell}" "maestro") '
-        f'printf("[%s maeOpenSetup] %s/%s  session=%s\\n" nth(2 parseString(getCurrentTime())) "{lib}" "{cell}" session) '
-        f'session)')
+        f"let((session) session = maeOpenSetup({q(lib)} {q(cell)} \"maestro\") "
+        f"printf(\"[%s maeOpenSetup] %s/%s  session=%s\\n\" "
+        f"nth(2 parseString(getCurrentTime())) {q(lib)} {q(cell)} session) "
+        f"session)"
+    )
     session = (r.output or "").strip('"')
     if not session or session in ("nil", "t"):
         raise RuntimeError(f"maeOpenSetup failed for {lib}/{cell}")
@@ -233,10 +236,10 @@ def close_session(client: VirtuosoClient, session: str) -> None:
     error and leaves the session alive).
     """
     client.execute_skill(
-        'progn('
-        f'maeCloseSession(?session "{session}" ?forceClose t) '
-        f'printf("[%s maeCloseSession] session=%s closed\\n" '
-        f'nth(2 parseString(getCurrentTime())) "{session}"))'
+        "progn("
+        f"maeCloseSession(?session {q(session)} ?forceClose t) "
+        f"printf(\"[%s maeCloseSession] session=%s closed\\n\" "
+        f"nth(2 parseString(getCurrentTime())) {q(session)}))"
     )
 
 

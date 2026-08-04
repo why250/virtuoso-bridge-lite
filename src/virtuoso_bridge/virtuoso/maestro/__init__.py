@@ -47,6 +47,8 @@ from virtuoso_bridge.virtuoso.maestro.writer import (
     run_and_wait,
     # export
     create_netlist_for_corner,
+    export_netlist,
+    MaestroNetlistExport,
     export_output_view,
     write_script,
     # migration
@@ -113,6 +115,8 @@ __all__ = [
     "run_and_wait",
     # write - export
     "create_netlist_for_corner",
+    "export_netlist",
+    "MaestroNetlistExport",
     "export_output_view",
     "write_script",
     # write - migration

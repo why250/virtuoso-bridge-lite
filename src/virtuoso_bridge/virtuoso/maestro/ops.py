@@ -32,6 +32,7 @@ from virtuoso_bridge.virtuoso.maestro.waveform_viewer import (
 from virtuoso_bridge.virtuoso.maestro.writer import (
     add_output,
     create_netlist_for_corner,
+    export_netlist,
     create_test,
     delete_var,
     export_output_view,
@@ -129,6 +130,7 @@ class MaestroOps:
 
     # Export, migration, and persistence
     create_netlist_for_corner = _client_method(create_netlist_for_corner)
+    export_netlist = _client_method(export_netlist)
     export_output_view = _client_method(export_output_view)
     write_script = _client_method(write_script)
     migrate_adel_to_maestro = _client_method(migrate_adel_to_maestro)

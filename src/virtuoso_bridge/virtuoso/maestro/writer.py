@@ -5,11 +5,28 @@ They return the raw SKILL output string.
 """
 
 import logging
+import re
+from dataclasses import dataclass
+from pathlib import Path
+from uuid import uuid4
 
 from virtuoso_bridge import VirtuosoClient
+from virtuoso_bridge.virtuoso.maestro.lifecycle import close_session, open_session
+from virtuoso_bridge.virtuoso.ops import q
 
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class MaestroNetlistExport:
+    """Local artifacts produced by :func:`export_netlist`."""
+
+    test: str
+    corner: str
+    output_dir: Path
+    input_scs: Path
+    netlist: Path
 
 
 def _q(client: VirtuosoClient, expr: str, timeout: int | None = None) -> str:
@@ -554,9 +571,141 @@ def create_netlist_for_corner(client: VirtuosoClient, test: str,
 
     If *session* is omitted, Cadence uses the current Maestro session.
     """
-    s = f' ?session "{session}"' if session else ""
+    s = f" ?session {q(session)}" if session else ""
     return _q(client,
-        f'maeCreateNetlistForCorner("{test}" "{corner}" "{output_dir}"{s})')
+        f"maeCreateNetlistForCorner({q(test)} {q(corner)} {q(output_dir)}{s})")
+
+
+def _skill_string_list(raw: str) -> list[str]:
+    """Decode a flat SKILL list of quoted strings."""
+    return re.findall(r'"((?:[^"\\]|\\.)*)"', raw)
+
+
+def _path_component(value: str, *, label: str) -> str:
+    """Validate one generated output-directory component."""
+    if not value or value in {".", ".."} or "/" in value or "\\" in value:
+        raise ValueError(f"{label} must be a non-empty path component: {value!r}")
+    return value
+
+
+def _select_one(values: list[str], *, label: str, requested: str | None) -> str:
+    """Resolve an explicit value or the only configured value."""
+    if requested is not None:
+        if requested not in values:
+            available = ", ".join(values) or "(none)"
+            raise ValueError(f"Unknown {label} {requested!r}; available: {available}")
+        return requested
+    if len(values) == 1:
+        return values[0]
+    if not values:
+        raise ValueError(f"Maestro has no configured {label}s")
+    raise ValueError(
+        f"Maestro has multiple {label}s; pass {label}= explicitly "
+        f"({', '.join(values)})"
+    )
+
+
+def export_netlist(
+    client: VirtuosoClient,
+    lib: str,
+    cell: str,
+    *,
+    test: str | None = None,
+    corner: str = "Nominal",
+    output_root: str | Path = "output",
+    overwrite: bool = False,
+) -> MaestroNetlistExport:
+    """Export one Maestro test/corner netlist to local files.
+
+    Opens a temporary background Maestro session, so the operation does not
+    require GUI focus and does not run a simulation or save Maestro setup.
+    The returned directory defaults to
+    ``output/<lib>/<cell>/netlist/<test>__<corner>/``.
+
+    Args:
+        client: Connected Virtuoso client.
+        lib: Library containing the Maestro cellview.
+        cell: Cell containing the ``maestro`` view.
+        test: Configured test name. Auto-selected only when exactly one exists.
+        corner: Configured corner name. Defaults to ``"Nominal"``.
+        output_root: Root directory for local artifacts.
+        overwrite: Replace ``input.scs`` and ``netlist`` when the target
+            directory already exists.
+
+    Returns:
+        Paths and the resolved test/corner in a :class:`MaestroNetlistExport`.
+
+    Raises:
+        ValueError: For invalid path components or ambiguous/missing setup.
+        FileExistsError: If the target output directory already exists and
+            ``overwrite`` is false.
+        RuntimeError: If Virtuoso or file transfer reports an error.
+    """
+    lib = _path_component(lib, label="lib")
+    cell = _path_component(cell, label="cell")
+    if test is not None:
+        test = _path_component(test, label="test")
+    corner = _path_component(corner, label="corner")
+
+    session = open_session(client, lib, cell)
+    remote_dir = f"/tmp/vb_maestro_netlist_{uuid4().hex}"
+    try:
+        tests = _skill_string_list(
+            _q(client, f"maeGetSetup(?session {q(session)})")
+        )
+        selected_test = _select_one(tests, label="test", requested=test)
+        corners = _skill_string_list(
+            _q(client, f'maeGetSetup(?session {q(session)} ?typeName "corners")')
+        )
+        selected_corner = _select_one(corners, label="corner", requested=corner)
+
+        output_dir = (
+            Path(output_root)
+            / lib
+            / cell
+            / "netlist"
+            / f"{selected_test}__{selected_corner}"
+        )
+        if output_dir.exists() and not overwrite:
+            raise FileExistsError(
+                f"Netlist output already exists: {output_dir}. "
+                "Pass overwrite=True to replace it."
+            )
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        create_netlist_for_corner(
+            client,
+            selected_test,
+            selected_corner,
+            remote_dir,
+            session=session,
+        )
+        input_scs = output_dir / "input.scs"
+        netlist = output_dir / "netlist"
+        for remote_path, local_path in (
+            (f"{remote_dir}/netlist/input.scs", input_scs),
+            (f"{remote_dir}/netlist/netlist", netlist),
+        ):
+            result = client.download_file(remote_path, local_path)
+            if result.errors:
+                raise RuntimeError(result.errors[0])
+
+        return MaestroNetlistExport(
+            test=selected_test,
+            corner=selected_corner,
+            output_dir=output_dir,
+            input_scs=input_scs,
+            netlist=netlist,
+        )
+    finally:
+        try:
+            client.run_shell_command(f"rm -rf {remote_dir}")
+        except Exception:  # noqa: BLE001
+            logger.warning("Could not remove temporary netlist directory: %s", remote_dir)
+        try:
+            close_session(client, session)
+        except Exception:  # noqa: BLE001
+            logger.warning("Could not close temporary Maestro session: %s", session)
 
 
 def export_output_view(client: VirtuosoClient, filepath: str, *,
