@@ -23,9 +23,6 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent / "src"))
 
 from virtuoso_bridge import VirtuosoClient
-from virtuoso_bridge.virtuoso.maestro import (
-    close_session, export_waveform, open_session, read_results, run_and_wait,
-)
 
 
 def parse_wave_file(path: str) -> list[tuple[float, float]]:
@@ -69,7 +66,7 @@ def main() -> int:
     #    no modal-dialog risk.  Important: we do NOT reuse some random
     #    pre-existing session here, because that might point at a different
     #    cell.  Always open a fresh bg session for this specific cell.
-    session = open_session(client, lib, cell)
+    session = client.maestro.open_session(lib, cell)
     print(f"[session] {session} (background)")
 
     try:
@@ -77,12 +74,12 @@ def main() -> int:
         # atomically with maeRunSimulation, then polls a marker file via SSH —
         # so the SKILL channel stays free during the wait.
         t0 = time.time()
-        history, _status = run_and_wait(client, session=session, timeout=600)
+        history, _status = client.maestro.run_and_wait(session=session, timeout=600)
         print(f"[sim] Done: {history} ({time.time() - t0:.1f}s)")
 
         # 3. Read structured results (per point × per output, with spec/pass).
         print("\n=== Results ===")
-        results = read_results(client, session, lib=lib, cell=cell)
+        results = client.maestro.read_results(session, lib=lib, cell=cell)
         history_name = results.get("history", "") or ""
         print(f"History: {history_name}")
         for pt in results.get("points", []):
@@ -111,12 +108,12 @@ def main() -> int:
 
             print("\n=== Waveforms ===")
             mag_file = str(output_dir / "rc_ac_mag_db.txt")
-            export_waveform(client, session, 'dB20(mag(v("/OUT")))',
+            client.maestro.export_waveform(session, 'dB20(mag(v("/OUT")))',
                             mag_file, analysis="ac", history=history_name)
             print(f"AC magnitude: {mag_file}")
 
             phase_file = str(output_dir / "rc_ac_phase.txt")
-            export_waveform(client, session, 'phase(v("/OUT"))',
+            client.maestro.export_waveform(session, 'phase(v("/OUT"))',
                             phase_file, analysis="ac", history=history_name)
             print(f"AC phase: {phase_file}")
 
@@ -139,7 +136,7 @@ def main() -> int:
     finally:
         # 5. Always release the background session, even on error.
         try:
-            close_session(client, session)
+            client.maestro.close_session(session)
         except Exception as exc:  # noqa: BLE001
             print(f"[WARN] close_session failed: {exc}", file=sys.stderr)
 

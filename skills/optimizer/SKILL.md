@@ -103,6 +103,26 @@ def evaluate(x, params):
     return my_model.predict(dict(zip(params, x)))
 ```
 
+**Packaged IC optimization workflow** — use an external CLI when the task is
+larger than a single black-box function and already has a project convention:
+
+- multiple Maestro/ADE point roots or testbenches must be aggregated
+- scalar metrics should be evaluated by existing OCEAN/SKILL expressions, not
+  reimplemented in Python
+- design variables are discrete, quantized, or constrained by legal grids
+- runs need durable artifacts: requirement files, reports, plots, manifests,
+  continuation state, and structured failure diagnostics
+
+In that case, keep `virtuoso-bridge-lite` as the Cadence access layer and call
+the workflow CLI from the evaluation backend rather than vendoring it into this
+skill. For example,
+[`HAIDERZz/IC-opt-workflow`](https://github.com/HAIDERZz/IC-opt-workflow) uses
+an `opt_requirement.md` project folder, Spectre/OCEAN metric extraction,
+OpenBox or TuRBO optimizers, multi-testbench/multi-corner aggregation, and
+fixed-point reruns. Treat it as an optional backend pattern: install it in the
+same Cadence-capable environment, run its `--doctor` check first, then let the
+agent inspect the generated reports/manifests before claiming success.
+
 ## Objective design
 
 Return a **scalar float**. Return `1e6` on failure — never `nan` or `inf`, because these break the GP surrogate model and cause the optimizer to diverge.

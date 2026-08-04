@@ -49,11 +49,6 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent / "src"))
 
 from virtuoso_bridge import VirtuosoClient
-from virtuoso_bridge.virtuoso.maestro import (
-    open_session,
-    close_session,
-    save_setup,
-)
 
 
 # Map user-friendly mode names → (uniMode, spectreXPreset-or-None).
@@ -172,14 +167,14 @@ def main() -> int:
 
     client = VirtuosoClient.from_env()
     print(f"[1/4] open background session for {lib}/{cell}")
-    session = open_session(client, lib, cell)
+    session = client.maestro.open_session(lib, cell)
 
     try:
         print(f"[2/4] set_simulator_mode({test=}, {mode=})")
         set_simulator_mode(client, session, test, mode)
 
         print(f"[3/4] save setup (persist uniMode/spectreXPreset)")
-        save_setup(client, lib, cell, session=session)
+        client.maestro.save_setup(lib, cell, session=session)
 
         print(f"[4/4] verify persisted mode:")
         uni, preset = read_simulator_mode(client, session, test)
@@ -187,7 +182,7 @@ def main() -> int:
         _assert_mode_applied((uni, preset), mode)
         print(f"       OK — mode {mode.upper()} applied")
     finally:
-        close_session(client, session)
+        client.maestro.close_session(session)
     return 0
 
 

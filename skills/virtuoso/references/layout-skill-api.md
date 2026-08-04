@@ -1,6 +1,6 @@
 # Layout Reference
 
-## Edit Pattern
+## Create and Modify Pattern
 
 ```python
 from virtuoso_bridge.virtuoso.layout import (
@@ -13,7 +13,7 @@ from virtuoso_bridge.virtuoso.layout import (
     layout_create_simple_mosaic as mosaic,
 )
 
-with client.layout.edit(lib, cell, mode="a") as lay:
+with client.layout.modify(lib, cell) as lay:
     lay.add(rect("M1", "drawing", 0, 0, 1, 0.5))
     lay.add(path("M2", "drawing", [(0, 0), (1, 0)], 0.1))
     lay.add(label("M1", "pin", 0.5, 0.25, "VDD", "centerCenter", "R0", "roman", 0.1))
@@ -24,8 +24,8 @@ with client.layout.edit(lib, cell, mode="a") as lay:
                    row_pitch=0.5, col_pitch=1.0))
 ```
 
-- `mode="w"`: create new (overwrites)
-- `mode="a"`: append to existing
+- `client.layout.create(...)`: create new (overwrites)
+- `client.layout.modify(...)`: append to existing
 
 ## Read / Query
 
@@ -57,7 +57,7 @@ client.execute_skill(layout_delete_cell(lib, cell))
 ## Tips
 
 - **Read before routing**: use `layout_read_geometry()` to get real coordinates, don't guess from labels
-- **Large edits**: split into chunks, first `mode="w"`, then `mode="a"` for subsequent batches
+- **Large edits**: start with `create()`, then use `modify()` for subsequent batches
 - **Via names**: query `techGetTechFile(cv)~>viaDefs` via `execute_skill()` if unsure
 - **Mosaic pitch**: origin-to-origin spacing, not edge gap. Derive from measured bbox
 - **Labels on metal**: anchor directly on the metal shape, not beside it

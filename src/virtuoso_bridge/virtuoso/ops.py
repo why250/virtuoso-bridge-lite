@@ -24,6 +24,10 @@ def default_view_type_for(view: str) -> str:
         return "maskLayout"
     if normalized == "schematic":
         return "schematic"
+    if normalized == "symbol":
+        return "schematicSymbol"
+    if normalized == "maestro":
+        return "maestro"
     return view
 
 def skill_point(x: float, y: float) -> str:
@@ -41,7 +45,7 @@ def open_cell_view(
     *,
     view: str = "layout",
     view_type: str | None = None,
-    mode: str = "w",
+    mode: str = "a",
 ) -> str:
     """Build SKILL to open and bind a target cellview to ``cv``."""
     resolved_view_type = view_type or default_view_type_for(view)

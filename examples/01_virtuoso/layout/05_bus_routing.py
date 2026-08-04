@@ -65,7 +65,7 @@ def main() -> int:
     print(f"Target Cell     : {cell}")
 
     def add_bus() -> None:
-        with client.layout.edit(lib, cell, mode="a") as layout:
+        with client.layout.modify(lib, cell) as layout:
             for bit in range(BUS_WIDTH):
                 y = Y_BASE + bit * BUS_PITCH
 

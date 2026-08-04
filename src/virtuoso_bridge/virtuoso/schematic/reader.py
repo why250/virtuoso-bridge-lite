@@ -30,6 +30,7 @@ import yaml
 from virtuoso_bridge import VirtuosoClient, decode_skill_output
 
 _DEFAULT_FILTERS_PATH = Path(__file__).parent / "cdf_param_filters.yaml"
+_DEFAULT_TIMEOUT_S = 300
 
 
 # =======================================================================
@@ -89,8 +90,8 @@ let((cv result)
                 result = strcat(result sprintf(nil "PARAM|%s|%L\n" p~>name p~>value)))))))))
   result = strcat(result "NETS\n")
   foreach(net cv~>nets
-    result = strcat(result sprintf(nil "NET|%s|%d|%s|%s"
-      net~>name net~>numBits
+      result = strcat(result sprintf(nil "NET|%s|%d|%s|%s"
+      net~>name if(net~>numBits net~>numBits 1)
       if(net~>sigType net~>sigType "signal")
       if(net~>isGlobal "t" "nil")))
     foreach(it net~>instTerms
@@ -99,7 +100,9 @@ let((cv result)
   result = strcat(result "PINS\n")
   foreach(term cv~>terminals
     result = strcat(result sprintf(nil "PIN|%s|%s|%d\n"
-      term~>name term~>direction term~>numBits)))
+      term~>name
+      if(term~>direction term~>direction "inputOutput")
+      if(term~>numBits term~>numBits 1))))
   {notes_section}
   result = strcat(result "END\n")
   result)
@@ -107,7 +110,11 @@ let((cv result)
 
 _GEOMETRY_INST_EXPR = r'''
       result = strcat(result sprintf(nil "|%L|%s|%L|%d|%s"
-        inst~>xy inst~>orient inst~>bBox inst~>numInst inst~>viewName))
+        inst~>xy
+        if(inst~>orient inst~>orient "R0")
+        inst~>bBox
+        if(inst~>numInst inst~>numInst 1)
+        if(inst~>viewName inst~>viewName "symbol")))
 '''
 
 _NOTES_SECTION_EXPR = r'''
@@ -135,6 +142,7 @@ def read_schematic(
     *,
     include_positions: bool = False,
     param_filters: str | Path | None = _DEFAULT_FILTERS_PATH,
+    timeout: int = _DEFAULT_TIMEOUT_S,
 ) -> dict:
     """Read a schematic in one SKILL call.
 
@@ -147,6 +155,9 @@ def read_schematic(
         param_filters: path to a YAML filter config.  Default uses the
             built-in cdf_param_filters.yaml.  Pass None to return all
             CDF params unfiltered.
+        timeout: Virtuoso SKILL execution timeout in seconds. Large schematics
+            can take longer than the transport default, so the reader defaults
+            to 300 seconds and lets callers override it.
 
     Returns:
         dict with keys: instances, nets, pins, notes.
@@ -165,8 +176,14 @@ def read_schematic(
     # Notes are always included
     skill = skill.replace("{notes_section}", _NOTES_SECTION_EXPR)
 
-    r = client.execute_skill(skill, timeout=60)
+    r = client.execute_skill(skill, timeout=timeout)
+    if getattr(r, "errors", None):
+        raise RuntimeError(f"read_schematic SKILL error: {r.errors[0]}")
     raw = decode_skill_output(r.output)
+    if raw.strip() == "ERROR":
+        raise RuntimeError(f"read_schematic could not open schematic {lib or '(current)'}/{cell or '(current)'}")
+    if not raw.strip():
+        raise RuntimeError(f"read_schematic returned empty output for {lib or '(current)'}/{cell or '(current)'}")
 
     # Load filter config
     filter_config = None

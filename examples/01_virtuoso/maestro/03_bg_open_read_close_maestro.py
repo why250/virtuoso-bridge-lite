@@ -22,7 +22,6 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent / "src"))
 
 from virtuoso_bridge import VirtuosoClient
-from virtuoso_bridge.virtuoso.maestro import close_session, open_session
 
 
 def _first_element(raw: str | None) -> str:
@@ -54,7 +53,7 @@ def main() -> int:
 
     # Open background session — raises RuntimeError if the cell or view is missing
     try:
-        session = open_session(client, lib, cell)
+        session = client.maestro.open_session(lib, cell)
     except RuntimeError as exc:
         print(f"[ERROR] Failed to open maestro: {exc}", file=sys.stderr)
         print(
@@ -85,7 +84,7 @@ def main() -> int:
     finally:
         # close_session failure should not mask the original error
         try:
-            close_session(client, session)
+            client.maestro.close_session(session)
         except Exception as close_exc:
             print(f"[WARN] Failed to close session cleanly: {close_exc}", file=sys.stderr)
             if error is None:

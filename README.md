@@ -21,6 +21,10 @@
   <a href="https://github.com/Arcadia-1/virtuoso-bridge-lite/pulls"><img src="https://img.shields.io/badge/PRs-welcome-brightgreen.svg" alt="PRs Welcome"/></a>
 </p>
 
+<p align="center">
+  English | <a href="READMEs/README.zh-CN.md">简体中文</a> | <a href="READMEs/README.zh-TW.md">繁體中文</a>
+</p>
+
 A new infrastructure for **Agentic Analog and Mixed-Signal Design**. LLM Agents drive Cadence Virtuoso instances — locally or remotely — turning tedious handcrafting into automated design flows.
 
 ### Why is this a "New Infrastructure"?
@@ -48,11 +52,25 @@ A new infrastructure for **Agentic Analog and Mixed-Signal Design**. LLM Agents 
 | Drive Virtuoso on a remote EDA server | Remote mode | SSH access, running Virtuoso, `load(...)` in CIW |
 | Drive Virtuoso on the same machine | Local mode | Running Virtuoso, `VB_REMOTE_HOST=localhost` |
 | Run Spectre from netlists | Spectre simulator | `spectre` on PATH, or `VB_CADENCE_CSHRC` |
+| Run reproducible IC optimization workflows | Optimizer skill + optional external workflow CLI | Spectre/OCEAN setup, requirement files |
 | Let a coding agent operate Cadence | Agent skills | Link `skills/` into your agent's skill directory |
 
 Virtuoso SKILL execution and Spectre simulation are independent. You can run
 Spectre without the SKILL bridge, and you can use the SKILL bridge without
 Spectre.
+
+### Python environment selection
+
+Python entry points discover the nearest parent `.env` containing
+`VB_REMOTE_HOST` or `VB_LOCAL_PORT`, then load it with `override=True`; this can
+change a long-lived process from local to remote mode. Pin the intended file
+before constructing a client when embedding the bridge:
+
+```python
+from virtuoso_bridge.env import set_runtime_env_file
+
+set_runtime_env_file("/path/to/virtuoso-bridge.env")
+```
 
 ## Quick Start
 
@@ -88,7 +106,7 @@ Useful first commands after the bridge is up:
 
 ```bash
 virtuoso-bridge windows       # list all open Virtuoso windows
-virtuoso-bridge screenshot    # screenshot CIW (or: current, N)
+virtuoso-bridge screenshot    # screenshot CIW to the user artifact directory
 virtuoso-bridge export-visio MyLib MyCell -o MyCell.vsdx  # Windows + Visio
 ```
 
@@ -122,7 +140,7 @@ All commands take `-p PROFILE` / `--env PATH` to pick a non-default config; run 
 | `init [user@host] [-J jump]` | Write a starter `.env` (no args = empty template) |
 | `start [--bind-venv]` | Start SSH tunnel + deploy daemon; `--bind-venv` (with `-p X`) also binds the active virtualenv to profile `X` |
 | `stop` | Stop the SSH tunnel |
-| `restart` | Restart tunnel + daemon |
+| `restart` | Restart tunnel and refresh the deployed daemon setup |
 | `status` | Tunnel + daemon health + Spectre availability |
 | `license` | Check Spectre license availability |
 | **Profile binding** | |
@@ -134,11 +152,17 @@ All commands take `-p PROFILE` / `--env PATH` to pick a non-default config; run 
 | `eval 'EXPR'` / `eval --stdin` | Run an inline SKILL expression; supports multi-statement via auto-wrapped `progn(...)` |
 | **Interaction / diagnostics** | |
 | `windows` | List all open Virtuoso windows (number + name) |
-| `screenshot [ciw\|current\|N]` | Capture a window to `output/` |
+| `screenshot [ciw\|current\|N] [-o DIR\|FILE]` | Capture a window; defaults to the user artifact screenshots directory |
 | `dismiss-dialog` | X11 path: find and dismiss blocking GUI dialogs (saves you when SKILL channel deadlocks on a modal) |
+| `list-windows [--json]` | X11 path: enumerate Virtuoso-related windows, including frame/child IDs and suggested modal actions |
+| `dismiss-window WINDOW_ID [--action enter\|escape\|alt-y\|alt-n]` | X11 path: send an explicit action to one window ID returned by `list-windows` |
 | `snapshot [-o DIR] [--history H]` | Dump the focused Virtuoso window (maestro/schematic/...) — brief by default, full disk dump with `-o` |
 | **Export** | |
 | `export-visio LIB CELL -o OUT.vsdx` | Render a Virtuoso schematic to Microsoft Visio (Windows + pywin32) |
+| **SKILL Finder** | |
+| `skill-find <query>` | Search SKILL functions by name (fuzzy/prefix/suffix/exact/regex) |
+| `skill-info <fn>` | Get detailed More Info docs for a SKILL function |
+| `doc-search <query>` | Search installed Cadence documentation through the active bridge, or pass `--doc-root` for local/offline search |
 
 ## Snapshot a maestro run
 
@@ -163,12 +187,12 @@ output/20260422_142137__MyLib__myTB/
         └── psf/       → spectre.out, logFile, dcOp.dc, *.ac, *.tran, ...
 ```
 
-Per-point `netlist/` keeps only the 4 files that actually describe the design (main SPICE netlist, testbench top level, FOM definitions, corner label). Psf keeps stdout + logs + non-binary analysis results. The full rule set — including what's commented out and why — lives in [`src/virtuoso_bridge/virtuoso/maestro/snapshot_filter.yaml`](src/virtuoso_bridge/virtuoso/maestro/snapshot_filter.yaml); edit the YAML (uncomment / comment lines) to add or drop files, no code change needed. Binary waveforms (`*.raw`, `wavedb/`) are never pulled — read them through `reader.runs.read_results` instead.
+Per-point `netlist/` keeps only the 4 files that actually describe the design (main SPICE netlist, testbench top level, FOM definitions, corner label). Psf keeps stdout + logs + non-binary analysis results. The full rule set — including what's commented out and why — lives in [`src/virtuoso_bridge/virtuoso/maestro/snapshot_filter.yaml`](src/virtuoso_bridge/virtuoso/maestro/snapshot_filter.yaml); edit the YAML (uncomment / comment lines) to add or drop files, no code change needed. Binary waveforms (`*.raw`, `wavedb/`) are never pulled — read scalar results through `client.maestro.read_results()` instead.
 
 ## Exposing skills to your coding agent
 
 The `skills/` directory ships [Claude Code](https://claude.com/claude-code) skills
-(`virtuoso`, `spectre`, `optimizer`). They are **not** symlinked into the repo's
+(`virtuoso`, `spectre`, `netlist`, `optimizer`). They are **not** symlinked into the repo's
 `.claude/skills/` on purpose — repo-tracked symlinks break on Windows and hardcode
 one user's absolute paths. Instead, each user links them into their own
 `~/.claude/skills/` once after cloning:
@@ -178,6 +202,7 @@ one user's absolute paths. Instead, each user links them into their own
 mkdir -p ~/.claude/skills
 ln -s "$(pwd)/skills/virtuoso"  ~/.claude/skills/virtuoso
 ln -s "$(pwd)/skills/spectre"   ~/.claude/skills/spectre
+ln -s "$(pwd)/skills/netlist"   ~/.claude/skills/netlist
 ln -s "$(pwd)/skills/optimizer" ~/.claude/skills/optimizer
 ```
 
@@ -186,6 +211,7 @@ ln -s "$(pwd)/skills/optimizer" ~/.claude/skills/optimizer
 New-Item -ItemType Directory -Force "$env:USERPROFILE\.claude\skills" | Out-Null
 New-Item -ItemType SymbolicLink -Path "$env:USERPROFILE\.claude\skills\virtuoso"  -Target "$PWD\skills\virtuoso"
 New-Item -ItemType SymbolicLink -Path "$env:USERPROFILE\.claude\skills\spectre"   -Target "$PWD\skills\spectre"
+New-Item -ItemType SymbolicLink -Path "$env:USERPROFILE\.claude\skills\netlist"   -Target "$PWD\skills\netlist"
 New-Item -ItemType SymbolicLink -Path "$env:USERPROFILE\.claude\skills\optimizer" -Target "$PWD\skills\optimizer"
 ```
 
@@ -199,8 +225,8 @@ same pattern — point their skills path at `skills/` in this repo.
 </p>
 
 - **VirtuosoClient** — pure TCP SKILL client. Sends SKILL as JSON, gets results. No SSH awareness.
-- **SpectreSimulator** — runs Spectre simulations remotely via SSH shell commands, transfers netlists and results via rsync.
-- **SSHClient** — maintains a persistent ControlMaster connection that multiplexes three channels: TCP port-forwarding (SKILL execution via the daemon), SSH shell commands (Spectre invocation), and rsync file transfer. Optional — bypassed in local mode.
+- **SpectreSimulator** — runs standalone Spectre simulations locally or through SSH, then parses PSF ASCII results into Python data.
+- **SSHClient** — maintains a persistent ControlMaster connection for TCP port-forwarding, remote shell commands, and file transfer. Optional — bypassed in local mode.
 
 Fully decoupled: VirtuosoClient works with any TCP endpoint — SSH tunnel, VPN, direct LAN, or local. Multiple connection profiles are supported, each managing an independent tunnel to a separate design server.
 
@@ -217,7 +243,7 @@ Fully decoupled: VirtuosoClient works with any TCP endpoint — SSH tunnel, VPN,
 | **Remote execution** | SSH tunnel, jump host, auto-reconnect | Not supported |
 | **Calling style** | String-based: `execute_skill("dbOpenCellViewByType(...)")` | Pythonic mapping: `ws.db.open_cell_view_by_type(...)` |
 | **Load .il files** | `client.load_il()` | Not supported |
-| **Layout / schematic API** | `client.layout.edit()` context manager | Raw SKILL only |
+| **Layout / schematic API** | `client.layout.create()` / `modify()` context managers | Raw SKILL only |
 | **Spectre simulation** | Built-in runner + PSF parser | Not supported |
 | **AI agent support** | Skill files, CLI-first, command logging | Not designed for agents |
 | **Python ↔ SKILL types** | String-based | Auto bidirectional mapping |
@@ -279,13 +305,3 @@ If you use virtuoso-bridge in academic work, please cite:
 - **Xintian Li** — Tsinghua University
 - **Nan Sun** — Tsinghua University
 - **Lu Jie** — Tsinghua University
-
-## Star History
-
-<a href="https://star-history.com/#Arcadia-1/virtuoso-bridge-lite&Date">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=Arcadia-1/virtuoso-bridge-lite&type=Date&theme=dark"/>
-    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=Arcadia-1/virtuoso-bridge-lite&type=Date"/>
-    <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=Arcadia-1/virtuoso-bridge-lite&type=Date"/>
-  </picture>
-</a>

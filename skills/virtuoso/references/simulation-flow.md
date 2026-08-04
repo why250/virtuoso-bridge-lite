@@ -8,10 +8,6 @@ Complete flow from opening Maestro to reading results. Follow this order exactly
 
 ```python
 from virtuoso_bridge import VirtuosoClient, decode_skill_output
-from virtuoso_bridge.virtuoso.maestro import (
-    read_results, save_setup, run_and_wait,
-    open_gui_session, close_gui_session, purge_maestro_cellviews,
-)
 
 client = VirtuosoClient.from_env()
 LIB, CELL = "myLib", "myTestbench"
@@ -19,12 +15,12 @@ LIB, CELL = "myLib", "myTestbench"
 # ── Step 0: Purge stale cellviews from memory ────────────────────
 # Prevents ASSEMBLER-8127 caused by internal edit locks from
 # previously closed sessions.
-purge_maestro_cellviews(client)
+client.maestro.purge_maestro_cellviews()
 
 # ── Step 1: Open maestro (handles cleanup automatically) ─────────
 # open_gui_session cleans background sessions, closes other cells'
 # windows, and opens in editable mode.
-session = open_gui_session(client, LIB, CELL)
+session = client.maestro.open_gui_session(LIB, CELL)
 
 # Or manually (if you need more control):
 # client.execute_skill('foreach(s maeGetSessions() errset(maeCloseSession(?session s ?forceClose t)))')
@@ -37,19 +33,18 @@ session = open_gui_session(client, LIB, CELL)
 # save_setup persists changes; run_and_wait starts the simulation
 # with a completion callback and polls via SSH.
 # SKILL channel stays free during the wait.
-save_setup(client, LIB, CELL, session=session)
-history, status = run_and_wait(client, session=session, timeout=600)
+client.maestro.save_setup(LIB, CELL, session=session)
+history, status = client.maestro.run_and_wait(session=session, timeout=600)
 history = history.strip('"')
 print(f"Simulation {status}: {history}")
 
 # ── Step 4: Read results ─────────────────────────────────────────
-results = read_results(client, session, lib=LIB, cell=CELL, history=history)
+results = client.maestro.read_results(session, lib=LIB, cell=CELL, history=history)
 for key, (expr, raw) in results.items():
     print(f"  {key}: {decode_skill_output(raw)[:200]}")
 
 # ── Step 5: (Optional) Export waveforms ──────────────────────────
-# from virtuoso_bridge.virtuoso.maestro import export_waveform
-# export_waveform(client, session, 'VT("/VOUT")', "output/vout.txt",
+# client.maestro.export_waveform(session, 'VT("/VOUT")', "output/vout.txt",
 #                 analysis="tran", history=history)
 ```
 
@@ -63,10 +58,10 @@ session = decode_skill_output(
     client.execute_skill('car(maeGetSessions())').output)
 
 # Save, run, wait, read — same as steps 6-7
-save_setup(client, LIB, CELL, session=session)
-history, status = run_and_wait(client, session=session, timeout=600)
+client.maestro.save_setup(LIB, CELL, session=session)
+history, status = client.maestro.run_and_wait(session=session, timeout=600)
 history = history.strip('"')
-results = read_results(client, session, lib=LIB, cell=CELL, history=history)
+results = client.maestro.read_results(session, lib=LIB, cell=CELL, history=history)
 ```
 
 ## How `run_and_wait` works
@@ -153,7 +148,7 @@ foreach(s maeGetSessions() maeCloseSession(?session s ?forceClose t))
 
 | Pitfall | Symptom | Fix |
 |---------|---------|-----|
-| Not purging before open | ASSEMBLER-8127 from stale internal lock | `purge_maestro_cellviews(client)` before `open_gui_session` |
+| Not purging before open | ASSEMBLER-8127 from stale internal lock | `client.maestro.purge_maestro_cellviews()` before `open_gui_session` |
 | Using `open_session` for simulation | `run_and_wait` hangs / returns immediately | Use `open_gui_session` (GUI mode), not `open_session` (background) |
 | Skipping `save_setup` | Simulation uses stale parameters | Always save before running |
 | `maeCloseResults` leaves Maestro read-only | Next `maeRunSimulation` fails | Use `open_gui_session` to re-establish editable mode |
@@ -167,10 +162,10 @@ For sweeping parameters and re-running simulation:
 ```python
 for val in ["1p", "2p", "5p", "10p"]:
     client.execute_skill(f'maeSetVar("CL" "{val}" ?session "{session}")')
-    save_setup(client, LIB, CELL, session=session)
-    history, status = run_and_wait(client, session=session, timeout=600)
+    client.maestro.save_setup(LIB, CELL, session=session)
+    history, status = client.maestro.run_and_wait(session=session, timeout=600)
     history = history.strip('"')
-    results = read_results(client, session, lib=LIB, cell=CELL, history=history)
+    results = client.maestro.read_results(session, lib=LIB, cell=CELL, history=history)
     # ... process results ...
 ```
 

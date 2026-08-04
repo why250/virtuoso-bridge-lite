@@ -22,7 +22,6 @@ from virtuoso_bridge.virtuoso.schematic.ops import (
     schematic_create_inst_by_master_name as inst,
 )
 from virtuoso_bridge.virtuoso.schematic.params import set_instance_params
-from virtuoso_bridge.virtuoso.schematic.reader import read_schematic
 
 # Local test environment record
 TEST_CONDA_ENV = "vector"
@@ -42,7 +41,7 @@ def _normalize(value: str) -> str:
 
 
 def _create_schematic(client: VirtuosoClient, lib: str, cell: str) -> None:
-    with client.schematic.edit(lib, cell) as sch:
+    with client.schematic.create(lib, cell) as sch:
         sch.add(inst("analogLib", "idc", "symbol", "I0", 0.0, 2.0, "R0"))
         sch.add(inst("analogLib", "res", "symbol", "R0", 3.0, 2.0, "R0"))
         sch.add(inst("analogLib", "cap", "symbol", "C0", 0.0, 0.0, "R0"))
@@ -63,7 +62,7 @@ def _set_params(client: VirtuosoClient) -> None:
 
 
 def _verify_params(client: VirtuosoClient, lib: str, cell: str) -> None:
-    data = read_schematic(client, lib, cell, include_positions=False, param_filters=None)
+    data = client.schematic.read(lib, cell, include_positions=False, param_filters=None)
     by_name = {inst_data["name"]: inst_data for inst_data in data["instances"]}
 
     for inst_name, expected in EXPECTED_PARAMS.items():

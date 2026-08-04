@@ -13,12 +13,11 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent / "src"))
 
 from virtuoso_bridge import VirtuosoClient
-from virtuoso_bridge.virtuoso.maestro import snapshot
 
 
 def main() -> int:
     client = VirtuosoClient.from_env()
-    snap = snapshot(client)
+    snap = client.maestro.snapshot()
     if not snap.get("session"):
         print(
             "Focused window is not an ADE Assembler / Explorer maestro.\n"

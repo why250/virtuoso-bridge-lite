@@ -5,9 +5,9 @@ Complements ``02_snapshot_with_metrics.py`` (which snapshots whichever
 maestro window the user currently has focused).  This script owns the
 whole lifecycle:
 
-    1. open_gui_session(lib, cell)   -> opens GUI, focuses the window
-    2. snapshot(client, output_root) -> resolves and dumps all artifacts
-    4. close_gui_session(session)    -> clean close (saves if dirty)
+    1. client.maestro.open_gui_session(lib, cell) -> opens GUI, focuses the window
+    2. client.maestro.snapshot(output_root)       -> resolves and dumps all artifacts
+    4. client.maestro.close_gui_session(session)  -> clean close (saves if dirty)
 
 Usage::
 
@@ -23,11 +23,6 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent / "src"))
 
 from virtuoso_bridge import VirtuosoClient
-from virtuoso_bridge.virtuoso.maestro import (
-    close_gui_session,
-    open_gui_session,
-    snapshot,
-)
 
 
 OUTPUT_ROOT = Path(__file__).parent.parent.parent.parent / "output"
@@ -45,11 +40,11 @@ def main() -> int:
     lib, cell = sys.argv[1], sys.argv[2]
     client = VirtuosoClient.from_env()
 
-    session = open_gui_session(client, lib, cell)
+    session = client.maestro.open_gui_session(lib, cell)
     print(f"Opened: {lib}/{cell}  (session {session})")
 
     try:
-        snap = snapshot(client, output_root=str(OUTPUT_ROOT))
+        snap = client.maestro.snapshot(output_root=str(OUTPUT_ROOT))
         if snap.get("session") != session:
             # The opened window should be focused and match the returned
             # session.  Mismatch means something else grabbed focus.
@@ -62,7 +57,7 @@ def main() -> int:
         snap_dir = snap.get("output_dir")
         print(f"Wrote snapshot to: {snap_dir}")
     finally:
-        close_gui_session(client, session)
+        client.maestro.close_gui_session(session)
         print(f"Closed session {session}")
 
     return 0

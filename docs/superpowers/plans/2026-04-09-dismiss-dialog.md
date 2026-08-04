@@ -1,5 +1,7 @@
 # Dialog Dismissal Feature Implementation Plan
 
+> Historical note: the `dismiss-dialog` feature is implemented as the `virtuoso-bridge dismiss-dialog` CLI command and Python API helpers. This archived plan originally proposed a standalone basic example script, but that example is not present in the current repository.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Automatically detect and close blocking Virtuoso GUI dialogs via X11, bypassing the stuck SKILL channel.
@@ -515,24 +517,19 @@ git commit -m "feat: add 'virtuoso-bridge dismiss-dialog' CLI command"
 
 ### Task 4: Integration test — end-to-end verify
 
-**Files:**
-- Create: `examples/01_virtuoso/basic/07_dismiss_dialog.py`
+**Current status:** no standalone example script exists in the current tree. Use the shipped CLI command instead:
 
-- [ ] **Step 1: Create example script**
+```bash
+virtuoso-bridge dismiss-dialog
+virtuoso-bridge dismiss-dialog --scan
+virtuoso-bridge dismiss-dialog --screenshot output/x11_screenshot.png
+```
+
+Archived proposed example script:
 
 ```python
 #!/usr/bin/env python3
-"""Demonstrate X11 dialog detection and dismissal.
-
-Usage::
-
-    python 07_dismiss_dialog.py              # scan for dialogs
-    python 07_dismiss_dialog.py --dismiss    # scan and dismiss
-    python 07_dismiss_dialog.py --screenshot # take fullscreen screenshot
-
-Prerequisites:
-  - virtuoso-bridge service running (virtuoso-bridge start)
-"""
+"""Demonstrate X11 dialog detection and dismissal."""
 
 from __future__ import annotations
 
@@ -575,22 +572,22 @@ if __name__ == "__main__":
 - [ ] **Step 2: Test scan mode (no dialog expected)**
 
 ```bash
-python examples/01_virtuoso/basic/07_dismiss_dialog.py
+virtuoso-bridge dismiss-dialog --scan
 # Expected: "Dialogs found: []"
 ```
 
 - [ ] **Step 3: Test screenshot**
 
 ```bash
-python examples/01_virtuoso/basic/07_dismiss_dialog.py --screenshot
+virtuoso-bridge dismiss-dialog --screenshot output/x11_screenshot.png
 # Expected: "Screenshot: {'local_path': 'output/x11_screenshot.png', ...}"
 ```
 
 - [ ] **Step 4: Commit**
 
 ```bash
-git add examples/01_virtuoso/basic/07_dismiss_dialog.py
-git commit -m "feat: add dialog dismiss example script"
+git add docs/superpowers/plans/2026-04-09-dismiss-dialog.md
+git commit -m "docs: mark dialog dismiss plan as historical"
 ```
 
 ---

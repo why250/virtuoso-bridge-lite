@@ -31,10 +31,6 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent / "src"))
 
 from virtuoso_bridge import VirtuosoClient
-from virtuoso_bridge.virtuoso.maestro import (
-    open_session, close_session, create_test, set_analysis,
-    add_output, set_spec, set_var, save_setup,
-)
 
 
 def main() -> int:
@@ -71,7 +67,7 @@ def main() -> int:
         schematic_create_wire_between_instance_terms as wire,
         schematic_create_pin_at_instance_term as pin_at,
     )
-    with client.schematic.edit(lib, cell) as sch:
+    with client.schematic.create(lib, cell) as sch:
         sch.add(inst("analogLib", "vdc", "symbol", "V0", 0, 0, "R0"))
         sch.add(inst("analogLib", "gnd", "symbol", "GND0", 0, -0.625, "R0"))
         sch.add(inst("analogLib", "res", "symbol", "R0", 1.5, 0.5, "R90"))
@@ -101,23 +97,23 @@ def main() -> int:
 
     # --- Create Maestro ---
     print("[maestro] Creating setup...")
-    session = open_session(client, lib, cell)
+    session = client.maestro.open_session(lib, cell)
 
-    create_test(client, "AC", lib=lib, cell=cell, session=session)
-    set_analysis(client, "AC", "tran", enable=False, session=session)
-    set_analysis(client, "AC", "ac",
+    client.maestro.create_test("AC", lib=lib, cell=cell, session=session)
+    client.maestro.set_analysis("AC", "tran", enable=False, session=session)
+    client.maestro.set_analysis("AC", "ac",
                  options='(("start" "1") ("stop" "10G") '
                          '("incrType" "Logarithmic") ("stepTypeLog" "Points Per Decade") '
                          '("dec" "20"))',
                  session=session)
-    add_output(client, "Vout", "AC", output_type="net", signal_name="/OUT", session=session)
-    add_output(client, "BW", "AC", output_type="point",
+    client.maestro.add_output("Vout", "AC", output_type="net", signal_name="/OUT", session=session)
+    client.maestro.add_output("BW", "AC", output_type="point",
                expr=r'bandwidth(mag(VF(\"/OUT\")) 3 \"low\")', session=session)
-    set_spec(client, "BW", "AC", gt="1G", session=session)
-    set_var(client, "c_val", "1p,100f", session=session)
+    client.maestro.set_spec("BW", "AC", gt="1G", session=session)
+    client.maestro.set_var("c_val", "1p,100f", session=session)
 
-    save_setup(client, lib, cell, session=session)
-    close_session(client, session)
+    client.maestro.save_setup(lib, cell, session=session)
+    client.maestro.close_session(session)
     print(f"[maestro] {lib}/{cell}/maestro")
     print(f"  Test: AC | Analysis: ac 1Hz-10GHz, 20pts/dec")
     print(f"  Outputs: Vout (net /OUT), BW (bandwidth expr)")

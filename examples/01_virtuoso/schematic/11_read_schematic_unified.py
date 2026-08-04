@@ -22,7 +22,6 @@ from __future__ import annotations
 import sys
 
 from virtuoso_bridge import VirtuosoClient
-from virtuoso_bridge.virtuoso.schematic.reader import read_schematic
 
 
 def _print_result(data: dict, *, include_positions: bool) -> None:
@@ -103,7 +102,7 @@ def main() -> int:
     if all_params:
         kw["param_filters"] = None
 
-    data = read_schematic(client, lib, cell, **kw)
+    data = client.schematic.read(lib, cell, **kw)
 
     _print_result(data, include_positions=include_positions)
     return 0

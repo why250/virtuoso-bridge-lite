@@ -86,7 +86,7 @@ def _clean_label(
 
 
 def _create(client: VirtuosoClient, lib: str, cell: str) -> None:
-    with client.schematic.edit(lib, cell) as sch:
+    with client.schematic.create(lib, cell) as sch:
         # Place instances in a row (all R0).
         sch.add(inst("analogLib", "vdc", "symbol", "V0", 0.0, 0.0, "R0"))
         sch.add(inst("analogLib", "res", "symbol", "R0", 3.0, 0.0, "R0"))

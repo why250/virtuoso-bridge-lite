@@ -3,7 +3,7 @@
 Usage:
     from virtuoso_bridge.virtuoso.schematic.ops import *
 
-    with client.schematic.edit(LIB, CELL) as sch:
+    with client.schematic.create(LIB, CELL) as sch:
         sch.add(schematic_create_inst_by_master_name("tsmcN28", "nch_ulvt_mac", "symbol", "M0", 0, 0, "R0"))
         sch.add(schematic_label_instance_term("M0", "D", "OUT"))
         sch.add(schematic_create_pin("IN", -1.0, 0.75, "R0", direction="input"))
@@ -15,8 +15,9 @@ Usage:
 
 from __future__ import annotations
 
-from typing import Any, TYPE_CHECKING
+from typing import TYPE_CHECKING
 
+from virtuoso_bridge.virtuoso.editor import ensure_operation_response
 from virtuoso_bridge.virtuoso.ops import open_cell_view, save_current_cellview
 from virtuoso_bridge.virtuoso.schematic.ops import (
     schematic_check,
@@ -25,21 +26,6 @@ from virtuoso_bridge.virtuoso.schematic.ops import (
 
 if TYPE_CHECKING:
     from virtuoso_bridge import VirtuosoClient
-
-
-def _ensure_operation_response(response: Any, *, context: str) -> None:
-    from virtuoso_bridge.models import ExecutionStatus, VirtuosoResult
-    if isinstance(response, VirtuosoResult):
-        if response.status != ExecutionStatus.SUCCESS:
-            errors = response.errors or ["unknown failure"]
-            raise RuntimeError(f"{context} failed: {errors[0]}")
-        return
-    if not response.get("ok", False):
-        raise RuntimeError(f"{context} failed: {response.get('error', 'request failed')}")
-    result = response.get("result", {})
-    if result.get("status") != "success":
-        errors = result.get("errors") or [result.get("status", "unknown failure")]
-        raise RuntimeError(f"{context} failed: {errors[0]}")
 
 
 class SchematicEditor:
@@ -51,7 +37,7 @@ class SchematicEditor:
         lib: str,
         cell: str,
         view: str = "schematic",
-        mode: str = "w",
+        mode: str = "a",
         timeout: int = 60,
     ) -> None:
         self.client = client
@@ -88,4 +74,4 @@ class SchematicEditor:
             self.commands.append(schematic_check())
             self.commands.append(save_current_cellview())
             response = self.client.execute_operations(self.commands, timeout=self.timeout)
-            _ensure_operation_response(response, context="schematic edit")
+            ensure_operation_response(response, context="schematic edit")

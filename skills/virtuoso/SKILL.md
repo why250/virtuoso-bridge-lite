@@ -34,7 +34,7 @@ You control a remote Cadence Virtuoso through `virtuoso-bridge`. Python runs loc
 
 | Level | When to use | Example |
 |-------|-------------|---------|
-| **Python API** | Schematic/layout editing — structured, safe | `client.schematic.edit(lib, cell)` |
+| **Python API** | Schematic/layout editing — structured, safe | `client.schematic.create(lib, cell)` |
 | **Inline SKILL** | Maestro, CDF params, anything the API doesn't cover | `client.execute_skill('maeRunSimulation()')` |
 | **SKILL file** | Bulk operations, complex loops | `client.load_il("my_script.il")` |
 
@@ -42,14 +42,17 @@ Always use the highest level that works. Drop to a lower level only when needed.
 
 **Never guess function names.** If the function isn't in the examples below, read the relevant `references/` file before writing the call. Fabricating a wrong name wastes time debugging in CIW.
 
-### Four domains
+### Five domains
 
 | Domain | What it does | Python package | API docs |
 |--------|-------------|----------------|----------|
 | **Schematic** | Create/edit schematics, wire instances, add pins | `client.schematic.*` | `references/schematic-python-api.md`, `references/schematic-skill-api.md` |
+| **Symbol** | Generate, edit, and read symbol views | `client.symbol.*` | `references/symbol-python-api.md` |
 | **Layout** | Create/edit layout, add shapes/vias/instances | `client.layout.*` | `references/layout-python-api.md`, `references/layout-skill-api.md` |
-| **Maestro** | Read/write ADE Assembler config, run simulations | `virtuoso_bridge.virtuoso.maestro` | `references/maestro-python-api.md`, `references/maestro-skill-api.md` |
+| **Maestro** | Read/write ADE Assembler config, run simulations | `client.maestro.*` | `references/maestro-python-api.md`, `references/maestro-skill-api.md` |
+| **Library** | Read/create/rename/delete libraries, bind technology | `client.library.*` | `references/library-python-api.md` |
 | **Netlist (si)** | Batch netlist generation without Maestro | `simInitEnvWithArgs` + `si` CLI | See "Batch Netlist (si)" section below |
+| **SKILL Finder** | Search SKILL function names and get detailed docs | `client.find_skill()`, `client.get_skill_more_info()` | `references/skill-finder-python-api.md` |
 | **General** | File transfer, screenshots, raw SKILL, .il loading | `client.*` | See below |
 
 ## Before you start
@@ -67,13 +70,16 @@ All `virtuoso-bridge` CLI commands and Python scripts must run inside the activa
 
 ### Connection sequence (follow in order)
 
-1. **Check `.env`** — the bridge looks up `.env` in this order: `--env FILE` (CLI flag) → `./.env` (project-local) → `~/.virtuoso-bridge/.env` (user-level). If **any** of these exists, skip `init`. Only run **`virtuoso-bridge init`** when none exist — it creates `~/.virtuoso-bridge/.env` (user-level, shared across projects). If the user already told you their SSH target, prefer `virtuoso-bridge init user@host [-J user@jump]` to fill host/user/jump + port in one step; otherwise plain `virtuoso-bridge init` writes an empty template for them to edit.
+1. **Check `.env`** — the bridge looks up `.env` in this order: `--env FILE` (CLI flag) → first parent `.env` that looks like a Virtuoso Bridge config (`VB_REMOTE_HOST` or `VB_LOCAL_PORT`) → `~/.virtuoso-bridge/.env` (user-level). If **any** of these exists, skip `init`. Only run **`virtuoso-bridge init`** when none exist — it creates `~/.virtuoso-bridge/.env` (user-level, shared across projects). If the user already told you their SSH target, prefer `virtuoso-bridge init user@host [-J user@jump]` to fill host/user/jump + port in one step; otherwise plain `virtuoso-bridge init` writes an empty template for them to edit.
 2. **`virtuoso-bridge start`** — starts the local bridge service and SSH tunnel.
 3. **If status is `degraded`** — the user must load the setup script in Virtuoso CIW (the `start` output tells them exactly what to run).
 4. **`virtuoso-bridge status`** — verify everything is `healthy` before proceeding.
 5. **`virtuoso-bridge windows`** — list all open Virtuoso windows (num + name).
-6. **`virtuoso-bridge screenshot [ciw|current|N]`** — screenshot a window to `output/`. Default: CIW.
-7. **`virtuoso-bridge snapshot -o <dir>`** — dump the currently-focused maestro window to `<dir>/<YYYYMMDD_HHMMSS>__<lib>__<cell>/` (state XMLs, SKILL probe output, per-point netlist + PSF results, `.rdb`). This is the default way to capture Maestro state — no Python required. Use the Python API (below) only inside a multi-step pipeline.
+6. **`virtuoso-bridge eval 'EXPR'`** — run a one-line SKILL expression from the shell and print the full `VirtuosoResult` JSON.
+7. **`virtuoso-bridge eval --stdin`** — run multi-line SKILL from stdin; the CLI auto-wraps multiple forms in `progn(...)` and returns the last form.
+8. **`virtuoso-bridge load FILE.il`** — run a `.il` file in the live Virtuoso session; uploads the file automatically in SSH mode.
+9. **`virtuoso-bridge screenshot [ciw|current|N] [-o DIR|FILE]`** — screenshot a window. Default target is CIW; default output is the user artifact screenshots directory.
+10. **`virtuoso-bridge snapshot -o <dir>`** — dump the currently-focused maestro window to `<dir>/<YYYYMMDD_HHMMSS>__<lib>__<cell>/` (state XMLs, SKILL probe output, per-point netlist + PSF results, `.rdb`). This is the default way to capture Maestro state — no Python required. Use the Python API (below) only inside a multi-step pipeline.
 
 ### Then
 
@@ -81,6 +87,33 @@ All `virtuoso-bridge` CLI commands and Python scripts must run inside the activa
 - **Open the window**: `client.open_window(lib, cell, view="layout")` so the user sees what you're doing.
 
 ## Client basics
+
+### Direct CLI SKILL execution
+
+For quick checks and one-off SKILL files, prefer the CLI over writing a Python
+wrapper. It uses the same bridge connection and avoids shell/Python/SKILL
+triple-quoting problems.
+
+```bash
+# One-line expression -- full VirtuosoResult JSON on stdout
+virtuoso-bridge eval 'getCurrentTime()'
+
+# Multi-line SKILL -- auto-wrapped in progn when needed
+virtuoso-bridge eval --stdin <<'EOF'
+let((libs)
+  libs = mapcar(lambda((l) l~>name) ddGetLibList())
+  printf("found %d libraries\n" length(libs))
+  libs)
+EOF
+
+# Whole .il file -- uploaded automatically in SSH mode
+virtuoso-bridge load my_script.il
+```
+
+Use Python only when the SKILL call is one step in a larger scripted workflow
+or when you need structured high-level APIs such as schematic/layout editors.
+
+### Python client
 
 ```python
 from virtuoso_bridge import VirtuosoClient
@@ -95,7 +128,8 @@ client.download_file(remote_path, local_path)    # remote → local
 client.open_window(lib, cell, view="layout")     # open GUI window
 client.run_shell_command("ls /tmp/")             # run shell on remote
 client.list_windows()                            # list all open windows
-client.screenshot(output="output", target="ciw") # screenshot a window
+client.screenshot(target="ciw")                   # screenshot to the user artifact directory
+client.screenshot(output="output", target="ciw")  # explicit repo-local output
 ```
 
 ### Batch attribute fetch: `fetch()` / `fetch_one()`
@@ -196,17 +230,20 @@ Load on demand — each contains detailed API docs and edge-case guidance:
 | File | Contents |
 |------|----------|
 | `references/schematic-skill-api.md` | Schematic SKILL API, terminal-aware helpers, CDF params |
-| `references/schematic-python-api.md` | SchematicEditor, SchematicOps, low-level builders |
+| `references/schematic-python-api.md` | SchematicEditor, SchematicOps, netlist import/export, low-level builders |
 | `references/layout-skill-api.md` | Layout SKILL API, read/query, mosaic, layer control |
 | `references/layout-python-api.md` | LayoutEditor, LayoutOps, shape/via/instance creation |
+| `references/library-python-api.md` | Library CRUD, technology binding, return/error contracts |
 | `references/maestro-skill-api.md` | mae* SKILL functions, OCEAN, corners, known blockers |
-| `references/maestro-python-api.md` | snapshot() (raw SKILL sections) + filter_*_xml + writer functions; read_results (per-point × per-output CSV) + export_waveform (OCEAN) |
+| `references/maestro-python-api.md` | snapshot() (raw SKILL sections) + filter_*_xml + writer functions; read_results (per-point × per-output CSV), export_waveform (OCEAN), and waveform viewer lifecycle |
 | `references/simulation-flow.md` | **Standard simulation flow** — 8-step guide, pitfalls, optimization loops |
 | `references/netlist.md` | CDL/Spectre netlist formats, spiceIn import |
 | `references/troubleshooting.md` | Known gotchas, GUI blocking, CDF quirks, connection issues |
 | `references/cellview-on-disk-layout.md` | What's inside each view on disk (`sch.oa`, `data.dm` binary format, `maestro.sdb`/`active.state` XML skeleton, lock files, SOS markers); which files are text-editable vs must go through DFII API |
 | `references/schematic-recreation.md` | Recreate schematic from existing design (grid layout, diff pair conventions) |
 | `references/batch-netlist-si.md` | Generate netlists without Maestro using si batch translator |
+| `references/skill-finder-python-api.md` | `skill-find` (search SKILL by name) and `skill-info` (More Info docs) |
+| `virtuoso-bridge doc-search <query>` | Search installed Cadence documentation via the bridge or explicit `--doc-root` paths |
 
 ## Examples
 
@@ -220,16 +257,21 @@ Load on demand — each contains detailed API docs and edge-case guidance:
 - `04_list_library_cells.py` — list libraries and cells
 - `05_multiline_skill.py` — multi-line SKILL with comments, loops, procedures
 - `06_screenshot.py` — capture layout/schematic screenshots
+- `08_library_management.py` — inspect a library, technology binding, categories, and members
 
 ### `examples/01_virtuoso/schematic/`
 - `01a_create_rc_stepwise.py` — create RC schematic via operations
 - `01b_create_rc_load_skill.py` — create RC schematic via .il script
 - `02_read_connectivity.py` — read instance connections and nets
 - `03_read_instance_params.py` — read CDF instance parameters
+- `04_test_set_instance_params_analoglib.py` — update analogLib instance parameters
 - `05_rename_instance.py` — rename schematic instances
 - `06_delete_instance.py` — delete instances
 - `07_delete_cell.py` — delete cells from library
 - `08_import_cdl_cap_array.py` — import CDL netlist via spiceIn (SSH)
+- `09_create_pins.py` — create schematic pins
+- `10_create_wire.py` — draw wires between pins
+- `11_read_schematic_unified.py` — read instances, nets, pins, geometry, and parameters
 
 ### `examples/01_virtuoso/layout/`
 - `01_create_layout.py` — create layout with rects, paths, instances
@@ -239,6 +281,11 @@ Load on demand — each contains detailed API docs and edge-case guidance:
 - `05_bus_routing.py` — bus routing
 - `06_read_layout.py` — read layout shapes
 - `07–10` — delete/clear operations
+
+### `examples/01_virtuoso/symbol/`
+- `01_rc_create_with_symbol.py` — native schematic-to-symbol generation
+- `02_bus10_create_with_symbol.py` — native generation with 20 pins
+- `03_manual_symbol_semantics.py` — manual drawing with native pin-name, instance/logical labels, selection box, and readback verification
 
 ### `examples/01_virtuoso/maestro/`
 - `01_read_focused_maestro.py` — in-memory snapshot of the focused maestro (config + env + results + outputs + corners + variables)
@@ -292,7 +339,7 @@ from virtuoso_bridge.virtuoso.schematic import (
     schematic_create_pin as pin,
 )
 
-with client.schematic.edit(LIB, CELL) as sch:
+with client.schematic.create(LIB, CELL) as sch:
     # 1. Place instances — sch.add() queues SKILL commands
     sch.add(inst("tsmcN28", "pch_mac", "symbol", "MP0", 0, 1.5, "R0"))
     sch.add(inst("tsmcN28", "nch_mac", "symbol", "MN0", 0, 0, "R0"))
@@ -363,8 +410,7 @@ client = VirtuosoClient.from_env()
 LIB, CELL = "myLib", "myCell"
 
 # 1. Schematic — default: topology only (no positions/geometry)
-from virtuoso_bridge.virtuoso.schematic.reader import read_schematic
-data = read_schematic(client, LIB, CELL, include_positions=False)
+data = client.schematic.read(LIB, CELL, include_positions=False)
 # data = {
 #     "instances": [{"name", "lib", "cell", "numInst", "view",
 #                    "params": {...}, "terms": {...}}, ...],
@@ -375,10 +421,10 @@ data = read_schematic(client, LIB, CELL, include_positions=False)
 # }
 
 # With positions (only when you need xy/bBox, e.g. for layout-aware editing):
-data_with_pos = read_schematic(client, LIB, CELL, include_positions=True)
+data_with_pos = client.schematic.read(LIB, CELL, include_positions=True)
 
 # No CDF param filtering (return all 200+ PDK params):
-raw = read_schematic(client, LIB, CELL, include_positions=False, param_filters=None)
+raw = client.schematic.read(LIB, CELL, include_positions=False, param_filters=None)
 
 # 2. Maestro — snapshot the focused window
 #
@@ -390,11 +436,10 @@ raw = read_schematic(client, LIB, CELL, include_positions=False, param_filters=N
 #   $ virtuoso-bridge snapshot -o output/
 #
 # Use the Python API only when snapshot is one step in a larger
-# same-connection pipeline (e.g. open_session → snapshot →
-# run_simulation → close_session, or a loop over many cells):
-
-from virtuoso_bridge.virtuoso.maestro import snapshot
-d = snapshot(client)                             # SKILL-only, ~150ms, 1 round-trip
+# same-connection pipeline (e.g. client.maestro.open_session →
+# client.maestro.snapshot → client.maestro.run_simulation →
+# client.maestro.close_session, or a loop over many cells):
+d = client.maestro.snapshot()                             # SKILL-only, ~150ms, 1 round-trip
 # d["raw_sections"] = [(probe_skill_text, raw_output), ...]
 #   Each label IS the actual SKILL string we ran (e.g.
 #   'maeGetAnalysis("test" "ac" ?session "fnxSession18")');
@@ -403,21 +448,21 @@ d = snapshot(client)                             # SKILL-only, ~150ms, 1 round-t
 
 # Full disk dump (raw + YAML-filtered XMLs + 16 SKILL probes + per-point
 # inputs + spectre results + .rdb):
-d = snapshot(client, output_root="output/")      # → d["output_dir"]
+d = client.maestro.snapshot(output_root="output/")      # → d["output_dir"]
 
 # IMPORTANT: snapshot() always uses the CURRENTLY FOCUSED maestro window.
-# Click the desired ADE Assembler first, or use open_session() to bring it up.
+# Click the desired ADE Assembler first, or use client.maestro.open_session() to bring it up.
 
 # Rule of thumb: one-shot inspection → CLI; multi-step pipeline → Python.
 
 # 3. Netlist — generate from maestro session, download via SSH
-session = open_session(client, LIB, CELL)
+session = client.maestro.open_session(LIB, CELL)
 test = decode_skill_output(
     client.execute_skill(f'car(maeGetSetup(?session "{session}"))').output)
 client.execute_skill(
     f'maeCreateNetlistForCorner("{test}" "Nominal" "/tmp/nl_{CELL}" ?session "{session}")')
 client.download_file(f"/tmp/nl_{CELL}/netlist/input.scs", "output/netlist.scs")
-close_session(client, session)
+client.maestro.close_session(session)
 ```
 
 ### Run a simulation
@@ -557,20 +602,18 @@ def read_maestro_results_from_log(client, LIB, CELL, history):
 
 # Full workflow:
 from virtuoso_bridge import VirtuosoClient
-from virtuoso_bridge.virtuoso.maestro import open_gui_session, run_and_wait, close_gui_session
-
 client = VirtuosoClient.from_env()
 LIB, CELL = "PLAYGROUND_AMP", "TB_AMP_5T_D2S_DC_AC"
 
-session = open_gui_session(client, LIB, CELL)  # GUI mode required for results
-history, _ = run_and_wait(client, session=session, timeout=300)
+session = client.maestro.open_gui_session(LIB, CELL)  # GUI mode required for results
+history, _ = client.maestro.run_and_wait(session=session, timeout=300)
 h = history.strip('"')
 
 results = read_maestro_results_from_log(client, LIB, CELL, h)
 print(results)
 # {'bandwidth(...)': '1.64M', 'dB20(...)': '10.93', ...}
 
-close_gui_session(client, session, save=False)
+client.maestro.close_gui_session(session, save=False)
 ```
 
 **Log format in the file:**
@@ -589,6 +632,7 @@ When `execute_skill()` times out, possible causes:
 | Cause | Symptom | Fix |
 |-------|---------|-----|
 | **Modal dialog** | GUI popup blocking CIW | `virtuoso-bridge dismiss-dialog` |
+| **Auto dialog finder missed a modal** | GUI popup visible, SKILL channel blocked | `virtuoso-bridge list-windows --json`, then `virtuoso-bridge dismiss-window WINDOW_ID --action enter` |
 | **Long operation** | Simulation or netlist running | Wait, or use `?waitUntilDone nil` |
 | **CIW input prompt** | CIW waiting for typed input | `dismiss-dialog` (sends Enter) |
 | **Bridge disconnected** | All calls fail immediately | `virtuoso-bridge restart` |
@@ -599,11 +643,15 @@ When `execute_skill()` times out, possible causes:
 # Find and dismiss all blocking Virtuoso dialogs
 virtuoso-bridge dismiss-dialog
 
+# Inspect X11 windows and dismiss one explicitly
+virtuoso-bridge list-windows --json
+virtuoso-bridge dismiss-window 0x4203583 --action enter
+
 # From Python
 client.dismiss_dialog()
 ```
 
-Uses `xwininfo` to find virtuoso-owned dialog windows and `XTestFakeKeyEvent` to send Enter. Works even when the SKILL channel is completely stuck.
+Uses `xwininfo` to find virtuoso-owned dialog windows and `XTestFakeKeyEvent` to send the requested key action. Works even when the SKILL channel is completely stuck.
 
 **Prevention:** Always `dbSave(cv)` before `hiCloseWindow(win)`. Never use `?waitUntilDone t` in simulation calls. Add dialog-recovery in simulation loops (see "Run a simulation" section).
 

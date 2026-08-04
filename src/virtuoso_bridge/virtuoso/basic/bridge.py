@@ -26,7 +26,9 @@ from virtuoso_bridge.virtuoso.ops import (
     save_current_cellview as op_save_current_cellview,
 )
 from virtuoso_bridge.virtuoso.layout import LayoutOps
+from virtuoso_bridge.virtuoso.library import LibraryOps
 from virtuoso_bridge.virtuoso.schematic import SchematicOps
+from virtuoso_bridge.virtuoso.symbol import SymbolOps
 
 logger = logging.getLogger(__name__)
 
@@ -87,7 +89,15 @@ class VirtuosoClient(VirtuosoInterface):
         self._tunnel = tunnel  # SSHClient, if provided
         self._log_to_ciw = log_to_ciw
         self.layout = LayoutOps(self)
+        self.library = LibraryOps(self)
         self.schematic = SchematicOps(self)
+        self.symbol = SymbolOps(self)
+        # Maestro imports the public client type, so defer its facade import
+        # until this client instance is constructed and module initialization
+        # is complete.
+        from virtuoso_bridge.virtuoso.maestro.ops import MaestroOps
+
+        self.maestro = MaestroOps(self)
         self._il_upload_cache: dict[str, tuple[str, str]] = {}
         # For connect retry when jump host adds latency
         self._has_jump_host = (
@@ -124,7 +134,9 @@ class VirtuosoClient(VirtuosoInterface):
                 raise RuntimeError("Tunnel state file is missing or invalid.")
             port = state["port"]
             ssh = SSHClient.from_env(keep_remote_files=True, profile=profile)
-            return cls(host="127.0.0.1", port=port, timeout=timeout, tunnel=ssh, log_to_ciw=log_to_ciw)
+            client = cls(host="127.0.0.1", port=port, timeout=timeout, tunnel=ssh, log_to_ciw=log_to_ciw)
+            client._reject_cross_user_daemon_if_reachable(profile=profile, timeout=min(timeout, 5))
+            return client
 
         # No tunnel running — start one
         suffix = f"_{profile}" if profile else ""
@@ -137,7 +149,9 @@ class VirtuosoClient(VirtuosoInterface):
             )
 
         ssh = SSHClient.from_env(keep_remote_files=True, profile=profile)
-        return cls(host="127.0.0.1", port=ssh.port, timeout=timeout, tunnel=ssh, log_to_ciw=log_to_ciw)
+        client = cls(host="127.0.0.1", port=ssh.port, timeout=timeout, tunnel=ssh, log_to_ciw=log_to_ciw)
+        client._reject_cross_user_daemon_if_reachable(profile=profile, timeout=min(timeout, 5))
+        return client
 
     @classmethod
     def local(
@@ -201,6 +215,16 @@ class VirtuosoClient(VirtuosoInterface):
         if self._tunnel is None:
             return None
         return getattr(self._tunnel, '_ssh_runner', None)
+
+    def _skill_finder_cache_host(self) -> str:
+        """Stable cache segment for SKILL Finder data."""
+        if self._tunnel is None:
+            return "local"
+        return (
+            getattr(self._tunnel, "remote_host", None)
+            or getattr(self._tunnel, "_remote_host", None)
+            or "local"
+        )
 
     @property
     def log_to_ciw(self) -> bool:
@@ -266,44 +290,82 @@ class VirtuosoClient(VirtuosoInterface):
                 errors=[str(e)],
             )
 
+    def _reject_cross_user_daemon_if_reachable(
+        self,
+        *,
+        profile: str | None,
+        timeout: int = 5,
+    ) -> None:
+        from virtuoso_bridge.daemon_guard import OVERRIDE_ENV, check_daemon_user
+
+        try:
+            check = check_daemon_user(self, profile=profile, timeout=timeout)
+        except Exception:
+            return
+        if not check.ok:
+            raise RuntimeError(
+                f"Virtuoso daemon identity mismatch: {check.error}. "
+                f"Set {OVERRIDE_ENV}=1 only if this cross-user connection is intentional."
+            )
+
     # -- SKILL execution ----------------------------------------------------
 
-    def execute_skill(self, skill_code: str, timeout: int | None = None) -> VirtuosoResult:
+    def execute_skill(
+        self,
+        skill_code: str,
+        timeout: float | None = None,
+    ) -> VirtuosoResult:
         """Execute SKILL code in Virtuoso via the RAMIC Bridge daemon."""
         effective_timeout = timeout if timeout is not None else self._timeout
 
         start_time = time.monotonic()
+        deadline = start_time + effective_timeout
         connect_deadline = start_time
         if self._has_jump_host:
-            connect_deadline = start_time + _TUNNEL_CONNECT_GRACE_SECONDS
+            connect_deadline = min(
+                deadline,
+                start_time + _TUNNEL_CONNECT_GRACE_SECONDS,
+            )
 
-        logger.debug("execute_skill %s:%d timeout=%d skill=%s",
+        logger.debug("execute_skill %s:%d timeout=%g skill=%s",
                       self._host, self._port, effective_timeout, skill_code[:120])
 
         try:
             while True:
+                if time.monotonic() >= deadline:
+                    raise socket.timeout
                 try:
-                    raw_response = self._execute_skill_once(skill_code, effective_timeout)
+                    raw_response = self._execute_skill_once(
+                        skill_code,
+                        effective_timeout,
+                        deadline,
+                    )
                     elapsed = time.monotonic() - start_time
                     result = self._parse_response(raw_response, elapsed)
                     logger.debug("execute_skill OK (%.3fs)", elapsed)
                     return result
                 except ConnectionRefusedError:
-                    if time.monotonic() >= connect_deadline:
+                    now = time.monotonic()
+                    if now >= deadline:
+                        raise socket.timeout
+                    if now >= connect_deadline:
                         raise
                     logger.debug("Connection refused, retrying (deadline in %.1fs)",
-                                 connect_deadline - time.monotonic())
-                    time.sleep(_TUNNEL_CONNECT_RETRY_DELAY)
+                                 connect_deadline - now)
+                    time.sleep(min(_TUNNEL_CONNECT_RETRY_DELAY, connect_deadline - now))
                 except OSError as exc:
-                    if not self._should_retry_tunnel_connect(exc, time.monotonic(), connect_deadline):
+                    now = time.monotonic()
+                    if now >= deadline:
+                        raise socket.timeout from exc
+                    if not self._should_retry_tunnel_connect(exc, now, connect_deadline):
                         raise
                     logger.debug("OSError %s, retrying (deadline in %.1fs)",
-                                 exc, connect_deadline - time.monotonic())
-                    time.sleep(_TUNNEL_CONNECT_RETRY_DELAY)
+                                 exc, connect_deadline - now)
+                    time.sleep(min(_TUNNEL_CONNECT_RETRY_DELAY, connect_deadline - now))
 
         except socket.timeout:
             elapsed = time.monotonic() - start_time
-            logger.warning("Socket timeout connecting to %s:%d after %ds",
+            logger.warning("Socket timeout connecting to %s:%d after %gs",
                            self._host, self._port, effective_timeout)
             return VirtuosoResult(
                 status=ExecutionStatus.ERROR,
@@ -486,7 +548,8 @@ let((result winName ciwNum)
         """Take a screenshot of a Virtuoso window and download it locally.
 
         Args:
-            output: Local path for the screenshot. Auto-generated if *None*.
+            output: Local path for the screenshot. Uses the user artifact
+                screenshots directory if *None*.
             target: ``"ciw"`` (default), ``"current"``, a view name like
                 ``"schematic"``/``"layout"``/``"maestro"``, or an integer
                 window number.
@@ -552,7 +615,8 @@ let((result winName ciwNum)
         # Download
         filename = f"{label}_{stamp}.png"
         if output is None:
-            output = Path(filename)
+            from virtuoso_bridge.runtime_paths import artifact_dir
+            output = artifact_dir("screenshots") / filename
         else:
             output = Path(output)
             if output.is_dir():
@@ -674,14 +738,20 @@ let((result winName ciwNum)
     # -- file transfer (delegates to tunnel) --------------------------------
 
     def download_file(self, remote_path: str | Path, local_path: str | Path,
-                      *, timeout: int | None = None) -> VirtuosoResult:
+                      *, timeout: int | None = None,
+                      recursive: bool = False) -> VirtuosoResult:
         started = time.perf_counter()
         source = _path_to_posix(remote_path)
         destination = Path(local_path)
-        destination.parent.mkdir(parents=True, exist_ok=True)
 
-        if self._tunnel is not None:
-            result = self._tunnel.download_file(source, destination, timeout=timeout)
+        if self._tunnel is not None and getattr(self._tunnel, "ssh_runner", None) is not None:
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            result = self._tunnel.download_file(
+                source,
+                destination,
+                timeout=timeout,
+                recursive=recursive,
+            )
             elapsed = time.perf_counter() - started
             if result.returncode != 0:
                 return VirtuosoResult(
@@ -700,7 +770,32 @@ let((result winName ciwNum)
         # Local mode: just copy
         import shutil
         try:
-            shutil.copy2(Path(source), destination)
+            if recursive:
+                source_path = Path(source).resolve()
+                destination_path = destination.resolve(strict=False)
+                if (
+                    source_path == destination_path
+                    or source_path.is_relative_to(destination_path)
+                    or destination_path.is_relative_to(source_path)
+                ):
+                    return VirtuosoResult(
+                        status=ExecutionStatus.ERROR,
+                        errors=[
+                            "Refusing recursive copy with overlapping "
+                            f"source and destination: {source} -> {destination}"
+                        ],
+                        execution_time=time.perf_counter() - started,
+                    )
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                if destination.exists():
+                    if destination.is_dir():
+                        shutil.rmtree(destination)
+                    else:
+                        destination.unlink()
+                shutil.copytree(Path(source), destination)
+            else:
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(Path(source), destination)
         except OSError as exc:
             return VirtuosoResult(
                 status=ExecutionStatus.ERROR,
@@ -726,7 +821,7 @@ let((result winName ciwNum)
                 execution_time=time.perf_counter() - started,
             )
 
-        if self._tunnel is not None:
+        if self._tunnel is not None and getattr(self._tunnel, "ssh_runner", None) is not None:
             result = self._tunnel.upload_file(source, destination, timeout=timeout)
             elapsed = time.perf_counter() - started
             if result.returncode != 0:
@@ -759,6 +854,475 @@ let((result winName ciwNum)
             execution_time=time.perf_counter() - started,
         )
 
+    # -- SKILL Finder -------------------------------------------------------
+
+    def find_skill(
+        self,
+        query: str,
+        *,
+        mode: str = "fuzzy",
+        limit: int = 50,
+        include_desc: bool = False,
+        source_dir: str | Path | None = None,
+        cache_dir: str | Path | None = None,
+    ) -> list[dict]:
+        """Search SKILL API documentation by name.
+
+        On first call (or when *source_dir* is not provided), discovers
+        the SKILL Finder directory on the remote server by walking up from
+        the ``virtuoso`` binary to ``doc/finder/SKILL``.  The directory is
+        cached locally in *cache_dir* (default:
+        the user cache directory under ``skill_finder/<host>`` so subsequent
+        calls are fast without additional network traffic.
+
+        Parameters
+        ----------
+        query : str
+            Search string (function name, or substring/prefix/suffix/regex
+            depending on *mode*).
+        mode : str
+            Search mode — one of:
+
+            - ``fuzzy`` (default) — case-insensitive substring match
+            - ``prefix`` — name starts with *query*
+            - ``suffix`` — name ends with *query*
+            - ``exact`` — exact name match
+            - ``regex`` — Python regular expression match
+
+        limit : int
+            Maximum results to return (default 50).
+        include_desc : bool
+            Also search in the description field (default: False).
+        source_dir : str | Path | None
+            Override the SKILL Finder source directory.  If None, the
+            directory is auto-discovered on the remote server.
+        cache_dir : str | Path | None
+            Local cache directory for downloaded .fnd files.  If None,
+            defaults to the user cache directory under ``skill_finder/<host>``.
+
+        Returns
+        -------
+        list[dict]
+            List of matching entries, each a dict with keys:
+            ``name``, ``syntax``, ``description``, ``source_file``.
+        """
+        from pathlib import Path as _Path
+        from virtuoso_bridge.runtime_paths import cache_dir as runtime_cache_dir
+        from virtuoso_bridge.virtuoso.skill_finder import (
+            SKILLFinder,
+            SearchMode,
+        )
+
+        # Resolve cache directory
+        if cache_dir:
+            cache_path = _Path(cache_dir).expanduser().resolve()
+        else:
+            cache_root = runtime_cache_dir("skill_finder")
+            cache_path = cache_root / self._skill_finder_cache_host()
+
+        # Discover SKILL Finder root
+        runner = self.ssh_runner
+        if source_dir:
+            finder_root = _Path(source_dir)
+            doc_root = finder_root.parent.parent
+        elif runner is not None:
+            profile = getattr(self._tunnel, "_profile", None) if self._tunnel else None
+            finder = SKILLFinder()
+            finder_root = finder.discover(remote_runner=runner, profile=profile)
+            if finder_root is None:
+                logger.warning(
+                    "find_skill: could not locate doc/finder/SKILL on %s",
+                    self._skill_finder_cache_host(),
+                )
+                return []
+            # Download .fnd files if cache is stale
+            cache_marker = cache_path / ".source_dir"
+            needs_download = True
+            if cache_path.exists() and cache_marker.exists():
+                cached = cache_marker.read_text().strip()
+                needs_download = cached != str(finder_root)
+            if needs_download:
+                import shutil
+                # Clear stale cache
+                if cache_path.exists():
+                    shutil.rmtree(cache_path)
+                cache_path.mkdir(parents=True, exist_ok=True)
+                logger.info(
+                    "find_skill: downloading SKILL Finder from %s", finder_root
+                )
+                try:
+                    result = runner.download(
+                        str(finder_root),
+                        cache_path,
+                        recursive=True,
+                        timeout=120,
+                    )
+                    if result.returncode != 0:
+                        logger.warning(
+                            "find_skill: download failed — %s",
+                            result.stderr.strip(),
+                        )
+                        return []
+                    cache_marker.write_text(str(finder_root))
+                except Exception as exc:
+                    logger.warning("find_skill: download error — %s", exc)
+                    return []
+            finder_root = cache_path
+            # Also store the doc root (parent of doc/finder/SKILL) for More Info use
+            doc_root = finder_root.parent.parent
+            doc_root_marker = cache_path / ".doc_root"
+            if not doc_root_marker.exists() or doc_root_marker.read_text().strip() != str(doc_root):
+                doc_root_marker.write_text(str(doc_root))
+        else:
+            # Local mode
+            finder = SKILLFinder()
+            finder_root = finder.discover(remote_runner=None)
+            if finder_root is None:
+                logger.warning("find_skill: could not locate SKILL Finder locally")
+                return []
+            doc_root = finder_root.parent.parent
+
+        # Parse and search
+        finder = SKILLFinder()
+        finder.source_dir = finder_root
+        try:
+            finder.load(finder_root)
+        except Exception as exc:
+            logger.warning("find_skill: failed to load .fnd files — %s", exc)
+            return []
+
+        results = finder.search(query, mode=mode, limit=limit, include_desc=include_desc)
+        return [e.to_dict() for e in results]
+
+
+    def get_skill_more_info(
+        self,
+        func_name: str,
+        *,
+        source_dir: str | Path | None = None,
+        cache_dir: str | Path | None = None,
+    ) -> dict | None:
+        """Get More Info documentation for a specific SKILL function.
+
+        The More Info system consists of a ``api_more_info.tgf`` index
+        and associated HTML files containing detailed function documentation.
+
+        On first call, the index and referenced HTML files are downloaded
+        to a local cache.  Subsequent calls use the cache.
+
+        Parameters
+        ----------
+        func_name : str
+            Name of the SKILL function to look up.
+        source_dir : str | Path | None
+            Override the doc root directory (parent of ``api_more_info/``).
+            If None, auto-discovered from the virtuoso binary.
+        cache_dir : str | Path | None
+            Local cache directory.  If None, defaults to
+            the user cache directory under ``skill_finder/<host>``.
+
+        Returns
+        -------
+        dict or None
+            Dict with keys: ``func_name``, ``file_path``, ``topic``,
+            ``raw_html``, ``plain_text``.  Returns None if the function
+            has no More Info entry.
+        """
+        from pathlib import Path as _Path
+        from virtuoso_bridge.runtime_paths import cache_dir as runtime_cache_dir
+        from virtuoso_bridge.virtuoso.skill_finder import SKILLFinder
+        from virtuoso_bridge.virtuoso.skill_finder.more_info import (
+            html_to_plain_text,
+            parse_tgf_index,
+            resolve_doc_path,
+        )
+
+        if cache_dir:
+            cache_path = _Path(cache_dir).expanduser().resolve()
+        else:
+            cache_root = runtime_cache_dir("skill_finder")
+            cache_path = cache_root / self._skill_finder_cache_host()
+
+        # Determine doc root
+        runner = self.ssh_runner
+        if source_dir:
+            doc_root = _Path(source_dir)
+        elif runner is not None:
+            profile = getattr(self._tunnel, "_profile", None) if self._tunnel else None
+            finder = SKILLFinder()
+            finder_root = finder.discover(remote_runner=runner, profile=profile)
+            if finder_root is None:
+                logger.warning(
+                    "get_skill_more_info: could not locate doc/finder/SKILL on %s",
+                    self._skill_finder_cache_host(),
+                )
+                return None
+            doc_root = finder_root.parent.parent
+        else:
+            finder = SKILLFinder()
+            finder_root = finder.discover(remote_runner=None)
+            if finder_root is None:
+                logger.warning("get_skill_more_info: could not locate SKILL Finder locally")
+                return None
+            doc_root = finder_root.parent.parent
+
+        # More Info cache subdirectory
+        mi_cache = cache_path / "more_info"
+        mi_cache.mkdir(parents=True, exist_ok=True)
+        tgf_marker = mi_cache / ".source_dir"
+
+        # Remote: download .tgf and needed HTML files
+        if runner is not None:
+            tgf_remote_path = str(doc_root / "api_more_info" / "api_more_info.tgf")
+            tgf_local_path = mi_cache / "api_more_info.tgf"
+
+            needs_download = (
+                not tgf_local_path.exists()
+                or tgf_marker.exists()
+                and tgf_marker.read_text().strip() != tgf_remote_path
+            )
+
+            if needs_download:
+                logger.info(
+                    "get_skill_more_info: downloading .tgf index from %s", tgf_remote_path
+                )
+                try:
+                    # Download just the .tgf file first
+                    result = runner.download(
+                        tgf_remote_path,
+                        mi_cache,
+                        recursive=False,
+                        timeout=30,
+                    )
+                    if result.returncode != 0:
+                        logger.warning(
+                            "get_skill_more_info: .tgf download failed — %s",
+                            result.stderr.strip(),
+                        )
+                        return None
+                    tgf_marker.write_text(tgf_remote_path)
+                except Exception as exc:
+                    logger.warning("get_skill_more_info: download error — %s", exc)
+                    return None
+
+            # Parse .tgf to find which HTML files are needed for this function
+            entries = parse_tgf_index(tgf_local_path)
+            entry = entries.get(func_name.lower())
+            if entry is None:
+                # OCEAN/ViVA_SKILL functions are indexed with a suffix
+                # (e.g. ocnPrint_OCEAN).  Try appending known suffixes so that
+                # ``skill-info ocnPrint`` finds ocnPrint_OCEAN automatically.
+                for suffix in ("_ocean", "_viva_skill"):
+                    entry = entries.get(func_name.lower() + suffix)
+                    if entry is not None:
+                        break
+            if entry is None:
+                return None
+
+            # Check if the referenced HTML file is cached
+            html_rel_path = entry.file_path.lstrip("$")  # e.g. "abstract/abstract_skill.html"
+            html_local_path = mi_cache / html_rel_path
+            html_remote_path = str(doc_root / html_rel_path)
+
+            if not html_local_path.exists():
+                logger.info(
+                    "get_skill_more_info: downloading %s", html_remote_path
+                )
+                try:
+                    html_local_path.parent.mkdir(parents=True, exist_ok=True)
+                    result = runner.download(
+                        html_remote_path,
+                        html_local_path,
+                        recursive=False,
+                        timeout=30,
+                    )
+                    if result.returncode != 0:
+                        logger.warning(
+                            "get_skill_more_info: HTML download failed — %s",
+                            result.stderr.strip(),
+                        )
+                        return None
+                except Exception as exc:
+                    logger.warning(
+                        "get_skill_more_info: HTML download error — %s", exc
+                    )
+                    return None
+
+            # Extract the topic from HTML
+            try:
+                html_content = html_local_path.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                return None
+
+            if entry.topic:
+                raw_html = None
+                # Try to extract specific topic
+                from virtuoso_bridge.virtuoso.skill_finder.more_info import (
+                    extract_topic_from_html,
+                )
+                raw_html = extract_topic_from_html(html_content, entry.topic)
+            else:
+                # Whole file is the More Info — no topic extraction needed
+                raw_html = html_content
+
+            if raw_html is None:
+                return None
+
+            plain_text = html_to_plain_text(raw_html)
+            return {
+                "func_name": entry.func_name,
+                "file_path": entry.file_path,
+                "topic": entry.topic,
+                "raw_html": raw_html,
+                "plain_text": plain_text,
+            }
+
+        else:
+            # Local mode
+            tgf_path = doc_root / "api_more_info" / "api_more_info.tgf"
+            entries = parse_tgf_index(tgf_path)
+            entry = entries.get(func_name.lower())
+            if entry is None:
+                for suffix in ("_ocean", "_viva_skill"):
+                    entry = entries.get(func_name.lower() + suffix)
+                    if entry is not None:
+                        break
+            if entry is None:
+                return None
+
+            html_path = resolve_doc_path(tgf_path, entry.file_path)
+            if not html_path.exists():
+                return None
+
+            try:
+                html_content = html_path.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                return None
+
+            if entry.topic:
+                from virtuoso_bridge.virtuoso.skill_finder.more_info import (
+                    extract_topic_from_html,
+                )
+                raw_html = extract_topic_from_html(html_content, entry.topic)
+            else:
+                raw_html = html_content
+
+            if raw_html is None:
+                return None
+
+            plain_text = html_to_plain_text(raw_html)
+            return {
+                "func_name": entry.func_name,
+                "file_path": entry.file_path,
+                "topic": entry.topic,
+                "raw_html": raw_html,
+                "plain_text": plain_text,
+            }
+
+
+    # -- Cadence documentation search --------------------------------------
+
+    def search_docs(
+        self,
+        query: str,
+        *,
+        limit: int = 10,
+        doc_roots: list[str | Path] | None = None,
+        cache_dir: str | Path | None = None,
+        rebuild_index: bool = False,
+    ) -> dict[str, object]:
+        """Search installed Cadence documentation.
+
+        In SSH mode this discovers documentation roots on the remote Cadence
+        installation, builds a local SQLite index from remote metadata, and
+        reuses that index for later queries. In local mode it indexes
+        configured local doc roots directly.
+        """
+        from pathlib import Path as _Path
+        from virtuoso_bridge.runtime_paths import cache_dir as runtime_cache_dir
+        from virtuoso_bridge.virtuoso.docs_search import (
+            cache_remote_doc_matches,
+            discover_remote_doc_roots,
+            find_remote_doc_matches,
+            remap_results_to_remote,
+            resolve_doc_roots,
+            search_docs,
+            search_remote_docs,
+        )
+        from virtuoso_bridge.virtuoso.skill_finder import SKILLFinder
+
+        safe_limit = max(limit, 0)
+        runner = self.ssh_runner
+
+        if doc_roots:
+            roots = resolve_doc_roots(doc_roots)
+            cache_root = _Path(cache_dir).expanduser() if cache_dir else runtime_cache_dir("docs_search")
+            return {
+                "doc_roots": [str(root) for root in roots],
+                "results": search_docs(
+                    query,
+                    roots,
+                    cache_root=cache_root / self._skill_finder_cache_host(),
+                    limit=safe_limit,
+                    rebuild=rebuild_index,
+                ),
+            }
+
+        if runner is not None:
+            profile = getattr(self._tunnel, "_profile", None) if self._tunnel else None
+            remote_roots = discover_remote_doc_roots(runner, profile=profile)
+            if not remote_roots:
+                return {"doc_roots": [], "results": []}
+
+            if cache_dir:
+                cache_root = _Path(cache_dir).expanduser()
+            else:
+                cache_root = runtime_cache_dir("docs_search")
+
+            try:
+                return {
+                    "doc_roots": remote_roots,
+                    "results": search_remote_docs(
+                        runner,
+                        query,
+                        remote_roots,
+                        cache_root=cache_root / self._skill_finder_cache_host(),
+                        limit=safe_limit,
+                        rebuild=rebuild_index,
+                    ),
+                }
+            except Exception as exc:
+                logger.warning("search_docs: remote index failed, falling back to candidate download: %s", exc)
+                matches = find_remote_doc_matches(runner, query, remote_roots, limit=safe_limit)
+                local_roots, root_map = cache_remote_doc_matches(
+                    runner,
+                    matches,
+                    cache_root / self._skill_finder_cache_host(),
+                )
+                results = search_docs(query, local_roots, limit=safe_limit)
+                return {
+                    "doc_roots": remote_roots,
+                    "results": remap_results_to_remote(results, root_map),
+                }
+
+        roots = resolve_doc_roots()
+        if not roots:
+            finder_root = SKILLFinder().discover(remote_runner=None)
+            if finder_root is not None:
+                roots = [finder_root.parent.parent.resolve()]
+        cache_root = _Path(cache_dir).expanduser() if cache_dir else runtime_cache_dir("docs_search")
+        return {
+            "doc_roots": [str(root) for root in roots],
+            "results": search_docs(
+                query,
+                roots,
+                cache_root=cache_root / self._skill_finder_cache_host(),
+                limit=safe_limit,
+                rebuild=rebuild_index,
+            ),
+        }
+
+
     # -- IL loading ---------------------------------------------------------
 
     def load_il(self, path: str | Path, timeout: int | None = None) -> VirtuosoResult:
@@ -787,7 +1351,7 @@ let((result winName ciwNum)
 
     def run_il_file(self, path: str | Path, lib: str, cell: str, *,
                     view: str = "layout", view_type: str | None = None,
-                    mode: str = "w", open_window: bool = True,
+                    mode: str = "a", open_window: bool = True,
                     save: bool = False, timeout: int | None = None) -> VirtuosoResult:
         effective_timeout = timeout if timeout is not None else self._timeout
         opened = self.open_cell_view(lib, cell, view=view, view_type=view_type, mode=mode, timeout=effective_timeout)
@@ -856,17 +1420,25 @@ let((result winName ciwNum)
             return remote_posix, True
         return _path_to_posix(p), False
 
-    def _execute_skill_once(self, skill_code: str, timeout: int) -> str:
+    def _execute_skill_once(
+        self,
+        skill_code: str,
+        timeout: float,
+        deadline: float,
+    ) -> str:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            s.settimeout(timeout)
+            s.settimeout(self._remaining_timeout(deadline))
             logger.debug("TCP connect %s:%d", self._host, self._port)
             s.connect((self._host, self._port))
             logger.debug("TCP connected, sending %d-byte payload", len(skill_code))
-            payload = json.dumps({"skill": skill_code, "timeout": timeout}).encode("utf-8")
+            request_timeout = min(timeout, self._remaining_timeout(deadline))
+            payload = json.dumps({"skill": skill_code, "timeout": request_timeout}).encode("utf-8")
+            s.settimeout(self._remaining_timeout(deadline))
             s.sendall(payload)
             s.shutdown(socket.SHUT_WR)
             chunks: list[bytes] = []
             while True:
+                s.settimeout(self._remaining_timeout(deadline))
                 chunk = s.recv(_RECV_BUF_SIZE)
                 if not chunk:
                     break
@@ -874,6 +1446,13 @@ let((result winName ciwNum)
             raw = b"".join(chunks).decode("utf-8", errors="ignore")
             logger.debug("TCP received %d bytes", len(raw))
             return raw
+
+    @staticmethod
+    def _remaining_timeout(deadline: float) -> float:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0.0:
+            raise socket.timeout
+        return remaining
 
     @staticmethod
     def _should_retry_tunnel_connect(exc: OSError, now: float, connect_deadline: float) -> bool:

@@ -43,7 +43,7 @@ ROW_PITCH = 1.0  # vertical spacing between channels (schematic units)
 
 def _create_schematic(client: VirtuosoClient, lib: str, cell: str) -> None:
     """10 horizontal resistors stacked vertically; one IN<i>/OUT<i> pair each."""
-    with client.schematic.edit(lib, cell) as sch:
+    with client.schematic.create(lib, cell) as sch:
         for i in range(N_CHANNELS):
             y = -i * ROW_PITCH
             # R<i> oriented R90 → PLUS on left at x≈0.0, MINUS on right at x≈1.0.
@@ -57,14 +57,11 @@ def _create_schematic(client: VirtuosoClient, lib: str, cell: str) -> None:
 def _generate_symbol(client: VirtuosoClient, lib: str, cell: str) -> None:
     # Geometric sort → pin order on the symbol mirrors schematic position
     # (top-to-bottom).  Default alphanumeric would sort IN10 before IN2 etc.
-    client.execute_skill('schSetEnv("ssgSortPins" "geometric")')
-    r = client.execute_skill(
-        'let((pl) '
-        f'pl = schSchemToPinList("{lib}" "{cell}" "schematic") '
-        f'schPinListToSymbol("{lib}" "{cell}" "symbol" pl))'
+    client.symbol.generate_from_schematic(
+        lib,
+        cell,
+        sort_pins="geometric",
     )
-    if r.errors:
-        raise RuntimeError(f"TSG failed: {r.errors[0]}")
 
 
 def _verify(client: VirtuosoClient, lib: str, cell: str) -> tuple[list[str], list[str]]:

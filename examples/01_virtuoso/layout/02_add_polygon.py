@@ -47,7 +47,7 @@ def main() -> int:
     print(f"Layer/Purpose   : {LAYER}/{PURPOSE}")
 
     def add_polygon() -> None:
-        with client.layout.edit(lib, cell, mode="a") as layout:
+        with client.layout.modify(lib, cell) as layout:
             layout.add(polygon(LAYER, PURPOSE, POINTS))
 
     edit_elapsed, _ = timed_call(add_polygon)

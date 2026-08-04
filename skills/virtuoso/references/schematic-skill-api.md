@@ -10,7 +10,7 @@ from virtuoso_bridge.virtuoso.schematic import (
     schematic_label_instance_term as label,
 )
 
-with client.schematic.edit(lib, cell) as sch:
+with client.schematic.create(lib, cell) as sch:
     sch.add(inst("analogLib", "vdc", "symbol", "V0", 0, 0, "R0"))
     sch.add(inst("analogLib", "gnd", "symbol", "GND0", 0, -0.5, "R0"))
     sch.add(wire("V0", "MINUS", "GND0", "gnd!"))

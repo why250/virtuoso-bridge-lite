@@ -146,7 +146,8 @@ def _dump_skill_text(snap_dir: Path, sections: list[tuple[str, str]]) -> None:
 # fallback used only if the file is unreadable (broken install etc.).
 
 _DEFAULT_NETLIST_FILES: tuple[str, ...] = (
-    "netlist", "input.scs", "qpInformation.ils", "paramInfo.ils",
+    "netlist", "input.scs", "qpInformation.ils",
+    "exprOutputs.json", "paramInfo.ils",
 )
 
 _DEFAULT_PSF_FILES: tuple[str, ...] = (

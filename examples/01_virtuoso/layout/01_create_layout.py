@@ -108,7 +108,7 @@ def main() -> int:
     print()
 
     def build_layout() -> None:
-        with client.layout.edit(lib_name, cell_name) as layout:
+        with client.layout.create(lib_name, cell_name) as layout:
             # --- instances (device masters from PDK_LIB) ---
             layout.add(inst(PDK_LIB, "nch_ulvt_mac", "layout", "M0", 0.0, 0.0, "R0"))
             layout.add(inst(PDK_LIB, "pch_ulvt_mac", "layout", "M1", 2.0, 0.0, "R0"))

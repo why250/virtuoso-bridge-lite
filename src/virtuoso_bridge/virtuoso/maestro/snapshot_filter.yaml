@@ -148,6 +148,7 @@ per_point:
     - netlist              # [KEEP] main SPICE netlist (subckts + primitive instances)
     - input.scs            # [KEEP] top-level testbench (models + analyses + parameters)
     - qpInformation.ils    # [KEEP] FOM / output-expression definitions
+    - exprOutputs.json     # [KEEP] JSON output-expression definitions used by ADE/Maestro
     - paramInfo.ils        # [KEEP] corner-label + run/point id
 
     # --- Same info as a [KEEP] file, different form ---
@@ -159,7 +160,6 @@ per_point:
     # - variables_file       # [REDUNDANT] PSF-format VDD/Vcm snapshot (= .designVariables)
     # - designInfo           # [REDUNDANT] = state_from_skill.txt's designInfo probe
     # - toolArgs.ils         # [REDUNDANT] mostly abs paths; relevant bits in state_from_skill
-    # - exprOutputs.json     # [REDUNDANT] JSON form of qpInformation.ils content
 
     # --- Netlist-assembly internals ---
     # - control              # [SCAFFOLDING] `[?netlistHeader] [?variables] ...` directive

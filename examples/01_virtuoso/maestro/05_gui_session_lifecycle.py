@@ -26,10 +26,6 @@ from pathlib import Path
 
 from virtuoso_bridge import VirtuosoClient, decode_skill_output
 from virtuoso_bridge.virtuoso.maestro.lifecycle import (
-    open_gui_session,
-    close_gui_session,
-    open_session,
-    close_session,
     _get_session_windows,
     _close_background_sessions,
 )
@@ -111,7 +107,7 @@ check("Clean state", len(sessions) == 0, f"sessions={sessions}")
 
 # =========================================================================
 print("\n=== Test 1: Clean open + close ===")
-session = open_gui_session(client, LIB, CELL)
+session = client.maestro.open_gui_session(LIB, CELL)
 check("Open returns session", session is not None and session != "", f"got {session}")
 
 windows = _get_session_windows(client)
@@ -120,29 +116,29 @@ if windows:
     check("Mode is editing", windows[0]["mode"] == "editing")
     check("Not modified", not windows[0]["modified"])
 
-close_gui_session(client, session)
+client.maestro.close_gui_session(session)
 sessions = get_sessions()
 check("Session closed", len(sessions) == 0, f"sessions={sessions}")
 
 # =========================================================================
 print("\n=== Test 2: Reuse existing Editing session ===")
-session1 = open_gui_session(client, LIB, CELL)
-session2 = open_gui_session(client, LIB, CELL)
+session1 = client.maestro.open_gui_session(LIB, CELL)
+session2 = client.maestro.open_gui_session(LIB, CELL)
 check("Same session reused", session1 == session2, f"{session1} vs {session2}")
 
 windows = _get_session_windows(client)
 check("Still one window", len(windows) == 1, f"got {len(windows)}")
 
-close_gui_session(client, session1)
+client.maestro.close_gui_session(session1)
 
 # =========================================================================
 print("\n=== Test 3: Background session cleanup ===")
 # Open background session (holds lock)
-bg_session = open_session(client, LIB, CELL)
+bg_session = client.maestro.open_session(LIB, CELL)
 check("Background session opened", bg_session is not None)
 
 # open_gui_session should clean it up automatically
-gui_session = open_gui_session(client, LIB, CELL)
+gui_session = client.maestro.open_gui_session(LIB, CELL)
 check("GUI session opened after bg cleanup", gui_session is not None)
 
 # Background session should be gone
@@ -150,11 +146,11 @@ sessions = get_sessions()
 check("Only GUI session remains", bg_session not in sessions,
       f"bg={bg_session} still in {sessions}")
 
-close_gui_session(client, gui_session)
+client.maestro.close_gui_session(gui_session)
 
 # =========================================================================
 print("\n=== Test 4: Close Editing session with unsaved changes ===")
-session = open_gui_session(client, LIB, CELL)
+session = client.maestro.open_gui_session(LIB, CELL)
 
 # Make a change to create the * (modified) state
 client.execute_skill(f'maeSetVar("_vb_test_var" "999" ?session "{session}")')
@@ -166,17 +162,17 @@ if windows:
           f"title: {windows[0]['title']}")
 
 # close_gui_session with save=True should save first, then close cleanly
-close_gui_session(client, session, save=True)
+client.maestro.close_gui_session(session, save=True)
 sessions = get_sessions()
 check("Session closed after save", len(sessions) == 0, f"sessions={sessions}")
 
 # Clean up the test variable
-temp = open_gui_session(client, LIB, CELL)
+temp = client.maestro.open_gui_session(LIB, CELL)
 client.execute_skill(f'''
 errset(axlRemoveElement(axlGetVar(axlGetMainSetupDB("{temp}") "_vb_test_var")))
 ''')
 client.execute_skill(f'maeSaveSetup(?lib "{LIB}" ?cell "{CELL}" ?view "maestro" ?session "{temp}")')
-close_gui_session(client, temp)
+client.maestro.close_gui_session(temp)
 
 # =========================================================================
 print("\n=== Test 5: Open when Reading session exists ===")
@@ -191,14 +187,14 @@ if windows:
           f"got {windows[0]['mode']}")
 
 # open_gui_session should close the reading session and reopen as editing
-session = open_gui_session(client, LIB, CELL)
+session = client.maestro.open_gui_session(LIB, CELL)
 check("Converted to editing session", session is not None)
 
 windows = _get_session_windows(client)
 if windows:
     check("Now in editing mode", windows[0]["mode"] == "editing")
 
-close_gui_session(client, session)
+client.maestro.close_gui_session(session)
 
 # =========================================================================
 print("\n=== Test 6: Close Reading* with no edit conflict (promote+save) ===")
@@ -220,7 +216,7 @@ if windows:
           f"mode={windows[0]['mode']} modified={windows[0]['modified']}")
 
 # close_gui_session should promote to editable, save, then close
-close_gui_session(client, session, save=True)
+client.maestro.close_gui_session(session, save=True)
 sessions = get_sessions()
 check("Session closed after promote+save", len(sessions) == 0, f"sessions={sessions}")
 
@@ -229,18 +225,18 @@ r = client.execute_skill('1+1', timeout=5)
 check("SKILL channel alive", r.output == "2", f"got {r.output}")
 
 # Clean up test variable
-temp = open_gui_session(client, LIB, CELL)
+temp = client.maestro.open_gui_session(LIB, CELL)
 client.execute_skill(f'''
 errset(axlRemoveElement(axlGetVar(axlGetMainSetupDB("{temp}") "_vb_test_var2")))
 ''')
 client.execute_skill(f'maeSaveSetup(?lib "{LIB}" ?cell "{CELL}" ?view "maestro" ?session "{temp}")')
-close_gui_session(client, temp)
+client.maestro.close_gui_session(temp)
 
 # =========================================================================
 print("\n=== Test 7: Close Reading* with edit conflict (defensive) ===")
 # This should not happen in normal use, but code must handle it safely.
 # Open one as editing (holds edit lock)
-editing_session = open_gui_session(client, LIB, CELL)
+editing_session = client.maestro.open_gui_session(LIB, CELL)
 check("Editing session opened", editing_session is not None)
 
 # Open another as reading (second window — abnormal state)
@@ -259,7 +255,7 @@ if reading_windows:
     time.sleep(0.5)
 
     # close_gui_session should discard changes (can't promote, edit lock held)
-    close_gui_session(client, reading_session, save=True)
+    client.maestro.close_gui_session(reading_session, save=True)
 
     # Verify SKILL channel is alive (no dialog stuck)
     r = client.execute_skill('1+1', timeout=5)
@@ -272,7 +268,7 @@ if reading_windows:
           f"sessions={sessions}")
 
 # Clean up
-close_gui_session(client, editing_session)
+client.maestro.close_gui_session(editing_session)
 
 # =========================================================================
 print(f"\n{'='*60}")

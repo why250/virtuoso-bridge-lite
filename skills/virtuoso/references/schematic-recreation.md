@@ -7,9 +7,7 @@ Read an existing schematic, map to a grid, redraw cleanly with stubs. Useful for
 Extract instances, connectivity, and positions:
 
 ```python
-from virtuoso_bridge.virtuoso.schematic.reader import read_schematic
-
-data = read_schematic(client, LIB, CELL, include_positions=True)
+data = client.schematic.read(LIB, CELL, include_positions=True)
 # data["instances"] has xy, orient, params, terms for each instance
 ```
 
@@ -44,7 +42,7 @@ LABELS = [
     ...
 ]
 
-with client.schematic.edit(LIB, CELL) as sch:
+with client.schematic.create(LIB, CELL) as sch:
     for name, cell, col, row, orient in INSTANCES:
         sch.add(inst(PDK, cell, "symbol", name, col * GRID, row * GRID, orient))
     for name, d, g, s, b in LABELS:

@@ -119,7 +119,7 @@ def main() -> int:
     print(f"  Font           : {FONT}")
     print()
 
-    with client.layout.edit(lib, CELL, mode="w") as layout:
+    with client.layout.create(lib, CELL) as layout:
 
         # -- Petals ----------------------------------------------------------------
         for i in range(N_PETALS):

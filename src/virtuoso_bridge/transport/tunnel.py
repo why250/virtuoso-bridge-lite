@@ -21,6 +21,7 @@ from typing import Any
 
 from virtuoso_bridge.env import load_vb_env, resolve_env_path
 from virtuoso_bridge.profile import resolve_profile
+from virtuoso_bridge.runtime_paths import legacy_cache_state_file, state_dir
 from virtuoso_bridge.transport.remote_paths import (
     default_virtuoso_bridge_dir,
     resolve_client_id,
@@ -31,9 +32,6 @@ from virtuoso_bridge.transport.ssh import SSHRunner, CommandResult
 logger = logging.getLogger(__name__)
 
 _TUNNEL_STARTUP_SETTLE_SECONDS = 1.0
-_STATE_DIR = Path.home() / ".cache" / "virtuoso_bridge"
-
-
 def _is_localhost(host: str | None) -> bool:
     """Return True if *host* refers to the local machine."""
     if not host:
@@ -43,7 +41,13 @@ def _is_localhost(host: str | None) -> bool:
 
 def _state_file(profile: str | None = None) -> Path:
     name = f"state_{profile}.json" if profile else "state.json"
-    return _STATE_DIR / name
+    return state_dir() / name
+
+
+def _state_file_candidates(profile: str | None = None) -> list[Path]:
+    primary = _state_file(profile)
+    legacy = legacy_cache_state_file(profile)
+    return [primary] if primary == legacy else [primary, legacy]
 
 # ---------------------------------------------------------------------------
 # Resource helpers (moved from bridge.py)
@@ -287,6 +291,7 @@ class SSHClient:
         runner = self._require_runner()
         result = runner.run_command(detect_cmd)
         output = result.stdout.strip()
+        stderr = result.stderr.strip()
         logger.info("Remote Python detection output: %s", output)
 
         python_cmd = None
@@ -307,9 +312,14 @@ class SSHClient:
                     pass
 
         if python_cmd is None or python_major is None:
+            details = f"Detection output: {output!r}"
+            if stderr:
+                details += f". SSH stderr: {stderr!r}"
+            if result.returncode != 0:
+                details += f". SSH return code: {result.returncode}"
             raise RuntimeError(
                 f"No Python interpreter found on {self._remote_host}. "
-                f"Detection output: {output!r}"
+                f"{details}"
             )
         logger.info("Detected remote Python: %s (version %d.%d)", python_cmd, python_major, python_minor)
         return python_cmd, python_major, python_minor
@@ -383,9 +393,9 @@ class SSHClient:
 
         # Determine local work directory
         if self._profile:
-            work_dir = _STATE_DIR / f"local_{self._profile}"
+            work_dir = state_dir() / f"local_{self._profile}"
         else:
-            work_dir = _STATE_DIR / "local"
+            work_dir = state_dir() / "local"
         work_dir.mkdir(parents=True, exist_ok=True)
 
         # Copy daemon and IL files into the work directory
@@ -532,7 +542,7 @@ class SSHClient:
 
     def save_state(self) -> None:
         """Save tunnel state so other processes can find the port."""
-        _STATE_DIR.mkdir(parents=True, exist_ok=True)
+        state_dir().mkdir(parents=True, exist_ok=True)
         is_local = _is_localhost(self._remote_host)
         tunnel_pid = None
         if not is_local:
@@ -551,13 +561,14 @@ class SSHClient:
     @staticmethod
     def read_state(profile: str | None = None) -> dict[str, Any] | None:
         """Read saved tunnel state."""
-        sf = _state_file(profile)
-        if not sf.is_file():
-            return None
-        try:
-            return json.loads(sf.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            return None
+        for sf in _state_file_candidates(profile):
+            if not sf.is_file():
+                continue
+            try:
+                return json.loads(sf.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+        return None
 
     @classmethod
     def is_running(cls, profile: str | None = None) -> bool:

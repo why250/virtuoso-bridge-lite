@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Snapshot the currently-focused maestro via two primitives.
 
-    1. snapshot(client, output_root=...)  →  identify and dump artifacts
+    1. client.maestro.snapshot(output_root=...)  →  identify and dump artifacts
 
 Writes ``{OUTPUT_ROOT}/{YYYYMMDD_HHMMSS}__{lib}__{cell}/`` with three
 "tracks" of state — each derived from a different source so they never
@@ -28,7 +28,6 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent / "src"))
 
 from virtuoso_bridge import VirtuosoClient
-from virtuoso_bridge.virtuoso.maestro import snapshot
 
 
 OUTPUT_ROOT = Path(__file__).parent.parent.parent.parent / "output"
@@ -38,7 +37,7 @@ def main() -> int:
     client = VirtuosoClient.from_env()
 
     # 1) "Where am I?" + 2) "Dump what I see."
-    snap = snapshot(client, output_root=str(OUTPUT_ROOT))
+    snap = client.maestro.snapshot(output_root=str(OUTPUT_ROOT))
     if not snap.get("session"):
         # Something IS focused — just not a maestro window.  Report it so
         # the user knows exactly what to click away from.

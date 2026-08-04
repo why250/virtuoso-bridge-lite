@@ -70,7 +70,7 @@ Some parameters have different names in schematic CDF vs netlist:
 
 `spiceIn` importing a CDL with `vsin` will create `analogLib/vsource` (not `analogLib/vsin`). To get `vsin` in the schematic, either:
 - Change the instance master manually after import
-- Use `client.schematic.edit()` to add the source with the correct master
+- Use `client.schematic.modify()` to add the source with the correct master
 - Add the source via SKILL: `dbCreateInst(cv dbOpenCellView("analogLib" "vsin" "symbol") ...)`
 
 ## Import: CDL → Virtuoso Schematic
@@ -94,11 +94,19 @@ devselect := inductor ind
 
 **Symbol generation** after spiceIn import:
 ```python
-# IMPORTANT: must be a single-line SKILL string — multi-line f-strings
-# with newlines cause SKILL parsing failure via bridge
-client.execute_skill(f'schPinListToSymbol("{lib}" "{cell}" "symbol" schSchemToPinList("{lib}" "{cell}" "schematic"))')
+result = client.symbol.generate_from_schematic(
+    lib,
+    cell,
+    sort_pins="alphanumeric",
+    overwrite=False,
+)
+print(result.terminal_names, result.pin_order)
 ```
-The function works for all cells. Never manually create symbols. Verify with `ddGetObj(lib cell)~>views~>name`.
+The helper wraps `schSchemToPinList` + `schPinListToSymbol`, restores the
+session's prior pin-sort setting, and verifies the generated terminals and
+effective pin order before returning. Set `overwrite=True` to replace a closed
+existing symbol through a backed-up, rollback-capable transaction instead of a
+GUI replace dialog.
 
 Key points:
 - **Auto-wires** everything — instances, nets, pins all connected automatically
@@ -132,7 +140,7 @@ Key points:
 
 ## Direct Schematic Read → Netlist
 
-The schematic database (instances, nets, terminals) can be read directly via SKILL and assembled into any netlist format without relying on external netlisters. See `examples/01_virtuoso/schematic/02_read_connectivity.py`.
+The schematic database (instances, nets, terminals) can be read directly via SKILL and assembled into any netlist format without relying on external netlisters. See `examples/01_virtuoso/schematic/11_read_schematic_unified.py` for the current full reader, or `examples/01_virtuoso/schematic/02_read_connectivity.py` for a topology-only connectivity example.
 
 Key SKILL accessors:
 - `cv~>instances` → all instances
@@ -184,6 +192,8 @@ Sample files in `references/netlist_samples/` — a 2-stage RC low-pass cascade 
 
 ## Examples
 
+- `examples/01_virtuoso/schematic/11_read_schematic_unified.py` — read instances, nets, pins, geometry, and parameters via SKILL
 - `examples/01_virtuoso/schematic/02_read_connectivity.py` — read schematic connectivity via SKILL
 - `examples/01_virtuoso/schematic/08_import_cdl_cap_array.py` — CDL → spiceIn import
-- `examples/01_virtuoso/maestro/04_rc_filter_sweep.py` — includes Spectre netlist export via maeCreateNetlistForCorner
+- `examples/01_virtuoso/maestro/06b_rc_simulate_and_read.py` — run a Maestro simulation and read/export results
+- `examples/01_virtuoso/maestro/09_export_sweep_subpoints.py` — export per-sweep-point waveforms

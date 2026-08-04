@@ -67,7 +67,7 @@ def main() -> int:
 
 
 def _create(client: VirtuosoClient, lib: str, cell: str) -> None:
-    with client.schematic.edit(lib, cell) as sch:
+    with client.schematic.create(lib, cell) as sch:
         # Place instances
         sch.add(inst("analogLib", "vdc", "symbol", "V0", 3.0, 0.0, "R0"))
         sch.add(inst("analogLib", "res", "symbol", "R0", 0.0, 0.0, "R0"))

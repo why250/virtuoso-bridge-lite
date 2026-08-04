@@ -22,7 +22,7 @@ has no such limitation.  We do this once per sweep point.
 
 This recipe assumes you already know the sweep dimensions and the
 absolute results root on the remote (which you can get from
-``snapshot()``'s on-disk dump).  Use ``snapshot(client, output_root=...)``
+``snapshot()``'s on-disk dump). Use ``client.maestro.snapshot(output_root=...)``
 upstream to discover them if you haven't recorded them.
 
 Usage::

@@ -97,6 +97,106 @@ def schematic_create_wire_label(
         f'"{escape_skill_string(style)}" {height:g} nil)'
     )
 
+
+_NET_STUB_DIR_OFFSETS = {
+    "up": (0.0, 1.0),
+    "down": (0.0, -1.0),
+    "left": (-1.0, 0.0),
+    "right": (1.0, 0.0),
+}
+
+
+def schematic_create_net_stub(
+    net_name: str,
+    x: float,
+    y: float,
+    *,
+    direction: str = "right",
+    length: float = 0.5,
+    cv_expr: str = "cv",
+    route_style: str = "route",
+    route_mode: str = "full",
+    justification: str = "centerCenter",
+    rotation: str | None = None,
+    style: str = "stick",
+    height: float = 0.0625,
+) -> str:
+    """Build SKILL to draw a short named net stub.
+
+    This is the generic version of the common schematic pattern: draw a small
+    wire segment and attach a wire label to it so matching labels connect
+    electrically without long crossing wires.
+    """
+    if direction not in _NET_STUB_DIR_OFFSETS:
+        raise ValueError(
+            f"direction must be one of {sorted(_NET_STUB_DIR_OFFSETS)}, got {direction!r}"
+        )
+    if length <= 0:
+        raise ValueError("length must be positive")
+    dx, dy = _NET_STUB_DIR_OFFSETS[direction]
+    end_x = x + dx * length
+    end_y = y + dy * length
+    label_x = (x + end_x) / 2.0
+    label_y = (y + end_y) / 2.0
+    label_rotation = rotation or ("R90" if direction in {"up", "down"} else "R0")
+    return (
+        "progn("
+        f"{schematic_create_wire([(x, y), (end_x, end_y)], cv_expr=cv_expr, route_style=route_style, route_mode=route_mode)} "
+        f"{schematic_create_wire_label(label_x, label_y, net_name, justification, label_rotation, cv_expr=cv_expr, style=style, height=height)}"
+        ")"
+    )
+
+
+def schematic_create_net_expression(
+    net_name: str,
+    net_expression: str,
+    x: float,
+    y: float,
+    *,
+    cv_expr: str = "cv",
+    justification: str = "lowerLeft",
+    rotation: str = "R0",
+    font_style: str = "stick",
+    height: float = 0.0625,
+) -> str:
+    """Build SKILL to attach an inherited-connection expression to a net wire.
+
+    Cadence inherited connections are modeled in two parts: the lower-level
+    schematic gets a net-expression label with ``schCreateNetExpression``, and
+    each upper-level instance can override that expression through a ``netSet``
+    property.
+    """
+    escaped_net = escape_skill_string(net_name)
+    return (
+        "let((rbWire rbLabel) "
+        f"rbWire = car(setof(x {cv_expr}~>shapes "
+        'x~>lpp && car(x~>lpp) == "wire" && '
+        f'x~>net && x~>net~>name == "{escaped_net}")) '
+        'unless(rbWire error("wire for net not found")) '
+        f"rbLabel = schCreateNetExpression({cv_expr} "
+        f'"{escape_skill_string(net_expression)}" rbWire {skill_point(x, y)} '
+        f'"{escape_skill_string(justification)}" '
+        f'"{escape_skill_string(rotation)}" '
+        f'"{escape_skill_string(font_style)}" {height:g}) '
+        "rbLabel)"
+    )
+
+def schematic_set_netset_property(
+    instance_name: str,
+    property_name: str,
+    net_name: str,
+    *,
+    cv_expr: str = "cv",
+) -> str:
+    """Build SKILL to set an instance inherited-connection override."""
+    return (
+        "let((rbInst) "
+        f'rbInst = car(setof(x {cv_expr}~>instances x~>name == "{escape_skill_string(instance_name)}")) '
+        'unless(rbInst error("instance not found")) '
+        f'dbReplaceProp(rbInst "{escape_skill_string(property_name)}" '
+        f'"netSet" "{escape_skill_string(net_name)}"))'
+    )
+
 def _schematic_term_center_expr(instance_name: str, term_name: str, *, cv_expr: str = "cv") -> str:
     return (
         "let((rbInst rbTerm rbPin rbFig rbBBox rbCtr) "
@@ -192,6 +292,7 @@ def schematic_label_instance_term(
     extension_length: float | None = None,
     cosmetic: str = "default",
     auto_rotation: bool = False,
+    bind_label_to_wire: bool = False,
 ) -> str:
     """Build SKILL to place a labeled wire stub at an instance terminal.
 
@@ -210,6 +311,11 @@ def schematic_label_instance_term(
     the geometric stub direction (the same ``rbDx`` / ``rbDy`` already
     computed inside the SKILL). Default False keeps the legacy explicit
     behavior.
+
+    ``bind_label_to_wire``: when True, pass the created wire object to
+    ``schCreateWireLabel`` instead of ``nil``. This avoids unconnected-label
+    warnings in flows that check the generated schematic immediately. Default
+    False keeps the legacy generated SKILL unchanged.
     """
     preset = _LABEL_TERM_COSMETIC_PRESETS.get(cosmetic, _LABEL_TERM_COSMETIC_PRESETS["default"])
     eff_just = justification if justification is not None else preset["justification"]
@@ -227,8 +333,18 @@ def schematic_label_instance_term(
     else:
         rotation_expr = f'"{escape_skill_string(rotation)}"'
 
+    wire_vars = "rbWire rbWireObj " if bind_label_to_wire else ""
+    wire_expr = (
+        f'rbWire = when(rbCtr && rbStubEnd schCreateWire({cv_expr} "route" "full" list(rbCtr rbStubEnd) 0 0 0 nil nil)) '
+        "rbWireObj = if(listp(rbWire) car(rbWire) rbWire) "
+        if bind_label_to_wire
+        else 'when(rbCtr && rbStubEnd schCreateWire(cv "route" "full" list(rbCtr rbStubEnd) 0 0 0 nil nil)) '
+    )
+    label_wire_expr = "rbWireObj" if bind_label_to_wire else "nil"
+    label_guard_expr = "rbWireObj && rbMid" if bind_label_to_wire else "rbMid"
+
     return (
-        "let((rbInst rbTerm rbPin rbFig rbLocalBBox rbLocalCtr rbLocalEnd rbCtr rbStubEnd rbMid "
+        f"let((rbInst rbTerm rbPin rbFig rbLocalBBox rbLocalCtr rbLocalEnd rbCtr rbStubEnd rbMid {wire_vars}"
         "rbInstBBox rbInstCtr rbDx rbDy rbMasterName rbTermName rbIsMos rbIsPmos rbOrigin rbLocalDir rbDirPt) "
         f"{_schematic_bind_instance_and_term_expr(instance_name, term_name, cv_expr=cv_expr)}"
         "rbLocalBBox = when(rbFig rbFig~>bBox) "
@@ -241,9 +357,9 @@ def schematic_label_instance_term(
         "rbMid = when(rbCtr && rbStubEnd "
         "list((xCoord(rbCtr) + xCoord(rbStubEnd)) / 2.0 "
         "(yCoord(rbCtr) + yCoord(rbStubEnd)) / 2.0)) "
-        "when(rbCtr && rbStubEnd schCreateWire(cv \"route\" \"full\" list(rbCtr rbStubEnd) 0 0 0 nil nil)) "
-        "when(rbMid "
-        f'schCreateWireLabel({cv_expr} nil rbMid "{escape_skill_string(net_name)}" '
+        f"{wire_expr}"
+        f"when({label_guard_expr} "
+        f'schCreateWireLabel({cv_expr} {label_wire_expr} rbMid "{escape_skill_string(net_name)}" '
         f'"{escape_skill_string(eff_just)}" '
         f'{rotation_expr} '
         f'"{escape_skill_string(style)}" {height:g} nil)))'

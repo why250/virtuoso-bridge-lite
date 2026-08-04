@@ -39,11 +39,6 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent / "src"))
 
 from virtuoso_bridge import VirtuosoClient
-from virtuoso_bridge.virtuoso.maestro.lifecycle import (
-    open_gui_session,
-    close_gui_session,
-    close_session,
-)
 
 
 def ensure_maestro_view(client: VirtuosoClient, lib: str, cell: str) -> None:
@@ -72,7 +67,7 @@ def ensure_maestro_view(client: VirtuosoClient, lib: str, cell: str) -> None:
 
     # Drop the background session — we don't need it.  The on-disk
     # files persist.
-    close_session(client, session)
+    client.maestro.close_session(session)
 
 
 def main() -> int:
@@ -91,11 +86,11 @@ def main() -> int:
     ensure_maestro_view(client, lib, cell)
 
     print(f"[step 2/2] open_gui_session — should now succeed without dialog")
-    session = open_gui_session(client, lib, cell)
+    session = client.maestro.open_gui_session(lib, cell)
     print(f"           opened: {session!r}")
 
     # Tidy up so the example leaves no stuck GUI window behind.
-    close_gui_session(client, session, save=False)
+    client.maestro.close_gui_session(session, save=False)
     print("Done.")
     return 0
 

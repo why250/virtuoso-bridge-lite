@@ -570,8 +570,7 @@ client.execute_skill(
     f'?view "maestro" ?session "{session}")')
 
 # Option A: use run_and_wait() from Python API (recommended — uses ?callback, non-blocking)
-# from virtuoso_bridge.virtuoso.maestro import run_and_wait
-# history, status = run_and_wait(client, session=session, timeout=300)
+# history, status = client.maestro.run_and_wait(session=session, timeout=300)
 
 # Option B: blocking wait via SKILL (simpler but blocks SKILL channel)
 client.execute_skill(f'maeRunSimulation(?session "{session}")')

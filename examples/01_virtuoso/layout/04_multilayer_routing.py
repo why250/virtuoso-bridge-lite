@@ -49,7 +49,7 @@ def main() -> int:
     print(f"Target Cell     : {cell}")
 
     def add_routing() -> None:
-        with client.layout.edit(lib, cell, mode="a") as layout:
+        with client.layout.modify(lib, cell) as layout:
             for layer in LAYERS:
                 layout.add(path(layer, "drawing", [(X_START, Y), (X_END, Y)], width=PATH_WIDTH))
 

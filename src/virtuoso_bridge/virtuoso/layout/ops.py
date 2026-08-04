@@ -50,7 +50,7 @@ def layout_bind_current_or_open_cell_view(
     *,
     view: str = "layout",
     view_type: str | None = None,
-    mode: str = "w",
+    mode: str = "a",
 ) -> str:
     """Bind ``cv`` to the active edit layout when it matches, else open it."""
     resolved_view_type = view_type or default_view_type_for(view)

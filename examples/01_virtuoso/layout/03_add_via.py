@@ -54,7 +54,7 @@ def main() -> int:
     print(f"Via Name        : {VIA_NAME}")
 
     def add_vias() -> None:
-        with client.layout.edit(lib, cell, mode="a") as layout:
+        with client.layout.modify(lib, cell) as layout:
             layout.add(via_by_name(
                 VIA_NAME,
                 BY_NAME_VIA_X,

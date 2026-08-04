@@ -31,7 +31,7 @@ from virtuoso_bridge.virtuoso.schematic.ops import (
 
 
 def _create(client: VirtuosoClient, lib: str, cell: str) -> None:
-    with client.schematic.edit(lib, cell) as sch:
+    with client.schematic.create(lib, cell) as sch:
         # Two resistors in series forming a voltage divider
         sch.add(inst("analogLib", "res", "symbol", "R0", 0.0, 0.5, "R0"))
         sch.add(inst("analogLib", "res", "symbol", "R1", 0.0, -0.5, "R0"))
