@@ -13,3 +13,15 @@
   use the per-user Windows Startup entry.  Once that process has established
   the local SSH tunnel, automated clients can use the existing
   `127.0.0.1:<VB_LOCAL_PORT>` TCP endpoint and execute SKILL normally.
+
+### 2026-08-04 Keep Virtuoso Bridge `.cdsinit` load paths on one line
+
+- **Symptom:** Virtuoso reports `*Error* load: can't access file` for the
+  bridge setup file even though the file exists.
+- **Root cause:** The `load("...")` string was split across two lines.  SKILL
+  treats the embedded newline and indentation as path whitespace, producing a
+  different, nonexistent filename.
+- **Fix:** Keep the bridge entry as one quoted line, for example
+  `load("/home/<user>/.virtuoso-bridge/.../virtuoso_setup.il")`.  Verify the
+  exact stored line remotely after editing; terminal display wrapping is not
+  itself a problem.
