@@ -2,6 +2,10 @@
 
 Control Cadence Virtuoso via Python — remotely over SSH or locally on the same machine.
 
+## IC_Server_Local file transfer
+
+For any local↔`IC_Server_Local` file transfer, use the global `ic-transfer` skill and its `ic-transfer upload` / `download` CLI after a successful health check. This includes Python source, directories, simulation artifacts, and logs. Do not use direct SCP/SFTP, rsync, or `ops.upload/download` for this host. If the service is unavailable, report it; use `git-archive-scp-transfer` only when the user explicitly authorizes its verified fallback workflow.
+
 ## Two modes
 
 | Mode | When | Setup |
