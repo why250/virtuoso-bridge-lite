@@ -20,3 +20,6 @@ reference/
 .claude/
 spectre.out
 WORK
+
+prompts/
+.codex/

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Git Archive SCP Transfer"
+  short_description: "Transfer source safely through Git archives"
+  default_prompt: "Package a Git revision as an archive, transfer it to IC_Server_Local, verify its checksum, and unpack it safely."

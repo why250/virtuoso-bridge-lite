@@ -1,3 +1,7 @@
 [mcp_servers.virtuoso-ic25]
 command = 'D:\\Users\\Administrator\\Documents\\GitHub\\virtuoso_help\\.venv\\Scripts\\python.exe'
 args = ['D:\\Users\\Administrator\\Documents\\GitHub\\virtuoso_help\\mcp_server\\server.py']
+
+sandbox_mode = "workspace-write"
+#sandbox_mode = "danger-full-access"
+approval_policy = "never"
